@@ -216,6 +216,7 @@ fn parse_usage(value: Value) -> Result<UsageInfo> {
 
     Ok(UsageInfo {
         agent_name: "claude-code".to_string(),
+        display_name: "Claude Code".to_string(),
         plan: None,
         windows,
         extra_usage,

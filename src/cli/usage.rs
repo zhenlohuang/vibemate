@@ -23,6 +23,7 @@ struct UsageJsonOutput {
 #[derive(Debug, Serialize)]
 struct UsageJsonAgent {
     agent_name: String,
+    display_name: String,
     plan: Option<String>,
     quotas: Vec<UsageJsonQuota>,
     extra_quotas: Vec<UsageJsonQuota>,
@@ -181,7 +182,12 @@ fn print_usage_table(items: &[UsageInfo], show_extra_quota: bool) {
 
     for item in items {
         let plan = item.plan.clone().unwrap_or_else(|| "unknown".to_string());
-        println!("\nAgent: {} (plan: {})", item.agent_name, plan);
+        let display_name = if item.display_name.trim().is_empty() {
+            item.agent_name.as_str()
+        } else {
+            item.display_name.as_str()
+        };
+        println!("\nAgent: {} (plan: {})", display_name, plan);
         let windows: Vec<_> = item
             .windows
             .iter()
@@ -230,6 +236,7 @@ fn to_usage_json_agent(info: &UsageInfo) -> UsageJsonAgent {
 
     UsageJsonAgent {
         agent_name: info.agent_name.clone(),
+        display_name: info.display_name.clone(),
         plan: info.plan.clone(),
         quotas,
         extra_quotas,
@@ -247,7 +254,7 @@ fn derive_quota_name(agent_name: &str, window: &crate::oauth::UsageWindow) -> St
     window.name.to_string()
 }
 
-fn derive_display_name(agent_name: &str, window: &crate::oauth::UsageWindow) -> String {
+pub fn derive_display_name(agent_name: &str, window: &crate::oauth::UsageWindow) -> String {
     if agent_name == "codex" && window.is_extra {
         let limit_name = window
             .source_limit_name
@@ -282,7 +289,7 @@ fn should_display_extra_quota(window: &crate::oauth::UsageWindow) -> bool {
     window.utilization_pct.is_finite()
 }
 
-fn should_display_window(window: &crate::oauth::UsageWindow) -> bool {
+pub fn should_display_window(window: &crate::oauth::UsageWindow) -> bool {
     if window.is_extra {
         return should_display_extra_quota(window);
     }
@@ -291,7 +298,7 @@ fn should_display_window(window: &crate::oauth::UsageWindow) -> bool {
 
 fn normalize_quota_display_name(quota_name: &str) -> String {
     if quota_name == "code-review-seven-day" || quota_name == "code-review" {
-        return "code review".to_string();
+        return "Code Review".to_string();
     }
     if quota_name == "five-hour" {
         return "5h limit".to_string();
@@ -339,7 +346,7 @@ mod tests {
         );
         assert_eq!(
             normalize_quota_display_name("code-review-seven-day"),
-            "code review"
+            "Code Review"
         );
         assert_eq!(
             normalize_quota_display_name("gpt-5-3-codex-spark-seven-day"),
@@ -404,6 +411,7 @@ mod tests {
     fn usage_json_splits_extra_quotas_for_claude() {
         let info = UsageInfo {
             agent_name: "claude-code".to_string(),
+            display_name: "Claude Code".to_string(),
             plan: None,
             windows: vec![
                 UsageWindow {
@@ -435,6 +443,7 @@ mod tests {
     fn usage_json_keeps_extra_quota_without_reset_at() {
         let info = UsageInfo {
             agent_name: "claude-code".to_string(),
+            display_name: "Claude Code".to_string(),
             plan: None,
             windows: vec![
                 UsageWindow {

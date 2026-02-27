@@ -9,7 +9,7 @@ mod tui;
 use clap::{Parser, Subcommand};
 use config::load_config;
 use std::path::PathBuf;
-use tracing_subscriber::{EnvFilter, FmtSubscriber};
+use tracing_subscriber::EnvFilter;
 
 use crate::error::Result;
 
@@ -44,12 +44,13 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    init_tracing();
-
     let Cli {
         config: config_path,
         command,
     } = Cli::parse();
+
+    let is_dashboard = matches!(command, Commands::Dashboard);
+    init_tracing(is_dashboard);
 
     let result: Result<()> = match command {
         Commands::Config { init } => cli::config::run(init, &config_path),
@@ -70,10 +71,20 @@ async fn main() -> anyhow::Result<()> {
     result.map_err(anyhow::Error::from)
 }
 
-fn init_tracing() {
+fn init_tracing(dashboard_mode: bool) {
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-    let subscriber = FmtSubscriber::builder()
-        .with_env_filter(env_filter)
-        .finish();
-    let _ = tracing::subscriber::set_global_default(subscriber);
+
+    if dashboard_mode {
+        // In dashboard/TUI mode, discard log output so it doesn't corrupt the screen.
+        let subscriber = tracing_subscriber::fmt()
+            .with_env_filter(env_filter)
+            .with_writer(std::io::sink)
+            .finish();
+        let _ = tracing::subscriber::set_global_default(subscriber);
+    } else {
+        let subscriber = tracing_subscriber::fmt()
+            .with_env_filter(env_filter)
+            .finish();
+        let _ = tracing::subscriber::set_global_default(subscriber);
+    }
 }

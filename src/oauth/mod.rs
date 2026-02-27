@@ -13,6 +13,7 @@ use crate::error::Result;
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct UsageInfo {
     pub agent_name: String,
+    pub display_name: String,
     pub plan: Option<String>,
     pub windows: Vec<UsageWindow>,
     pub extra_usage: Option<Value>,

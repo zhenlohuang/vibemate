@@ -341,6 +341,7 @@ fn parse_usage(value: Value) -> UsageInfo {
 
     UsageInfo {
         agent_name: "codex".to_string(),
+        display_name: "Codex".to_string(),
         plan,
         windows,
         extra_usage: None,

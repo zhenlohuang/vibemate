@@ -50,9 +50,10 @@ async fn run_dashboard_loop(
     let proxy_task = tokio::spawn(async move { proxy::server::start(&proxy_config, log_tx).await });
 
     let usage_task_tx = usage_tx.clone();
-    tokio::spawn(async move {
+    let show_extra_quota = config.server.show_extra_quota;
+    let usage_task = tokio::spawn(async move {
         loop {
-            let update = collect_usage().await;
+            let update = collect_usage(show_extra_quota).await;
             if usage_task_tx.send(update).await.is_err() {
                 break;
             }
@@ -85,26 +86,33 @@ async fn run_dashboard_loop(
 
         if event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
+                let ctrl = key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL);
                 match key.code {
                     KeyCode::Char('q') => break,
+                    KeyCode::Char('c') if ctrl => break,
                     KeyCode::Char('r') => {
-                        let update = collect_usage().await;
+                        let update = collect_usage(config.server.show_extra_quota).await;
                         app.usage = update.usage;
                         app.status_message = update.message;
                     }
                     KeyCode::Char('j') | KeyCode::Down => app.scroll_down(),
                     KeyCode::Char('k') | KeyCode::Up => app.scroll_up(),
-                    KeyCode::Tab => app.cycle_focus(),
+                    KeyCode::Tab => app.next_tab(),
                     _ => {}
                 }
             }
         }
     }
 
+    proxy_task.abort();
+    usage_task.abort();
+
     Ok(())
 }
 
-async fn collect_usage() -> UsageUpdate {
+async fn collect_usage(show_extra_quota: bool) -> UsageUpdate {
     let mut usage = Vec::new();
     let mut errors = Vec::new();
 
@@ -165,10 +173,16 @@ async fn collect_usage() -> UsageUpdate {
     }
 
     let message = if errors.is_empty() {
-        Some("q:quit  r:refresh  Tab:focus  j/k:scroll".to_string())
+        Some("q:quit  r:refresh  Tab:switch page  j/k:scroll".to_string())
     } else {
         Some(errors.join(" | "))
     };
+
+    if !show_extra_quota {
+        for info in &mut usage {
+            info.windows.retain(|window| !window.is_extra);
+        }
+    }
 
     UsageUpdate { usage, message }
 }
