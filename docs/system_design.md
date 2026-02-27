@@ -18,6 +18,8 @@ Vibemate is a Rust CLI tool that acts as a local AI model proxy and usage dashbo
 | `vibemate login codex` | Authenticate with OpenAI Codex via OAuth PKCE |
 | `vibemate login claude-code` | Authenticate with Anthropic Claude Code via OAuth PKCE |
 | `vibemate usage` | Display quota/usage for logged-in coding agents |
+| `vibemate usage --json` | Display normalized usage as pretty JSON |
+| `vibemate usage --raw` | Display raw usage payloads from each agent as pretty JSON |
 | `vibemate proxy` | Start the proxy server (foreground) |
 | `vibemate dashboard` | Start the TUI dashboard (proxy + usage + request logs) |
 
@@ -145,7 +147,14 @@ enum Commands {
         agent: String,
     },
     /// Display quota/usage for logged-in agents
-    Usage,
+    Usage {
+        /// Output normalized usage as JSON
+        #[arg(long, conflicts_with = "raw")]
+        json: bool,
+        /// Output provider raw usage payloads as JSON
+        #[arg(long, conflicts_with = "json")]
+        raw: bool,
+    },
     /// Start the proxy server
     Proxy,
     /// Start the TUI dashboard
@@ -376,8 +385,8 @@ provider = "anthropic-official"
 
 | File | Purpose |
 |---|---|
-| `~/.vibemate/codex_auth.json` | Codex OAuth tokens |
-| `~/.vibemate/claude_auth.json` | Claude Code OAuth tokens |
+| `~/.vibemate/auth/codex_auth.json` | Codex OAuth tokens |
+| `~/.vibemate/auth/claude_auth.json` | Claude Code OAuth tokens |
 
 ---
 
@@ -431,19 +440,19 @@ Headers are configured per-provider in the TOML config (not hardcoded by type). 
 | `CALLBACK_PATH` | `/auth/callback` |
 | `REDIRECT_URI` | `http://localhost:1455/auth/callback` |
 | `USAGE_URL` | `https://chatgpt.com/backend-api/wham/usage` |
-| Token file | `~/.vibemate/codex_auth.json` |
+| Token file | `~/.vibemate/auth/codex_auth.json` |
 
 **Flow:**
 
-1. Generate PKCE `code_verifier` (32 random bytes, base64url-encoded) and `code_challenge` (SHA-256 of verifier, base64url-encoded).
+1. Generate PKCE `code_verifier` (32 random bytes, base64url-encoded), `code_challenge` (SHA-256 of verifier, base64url-encoded), and random `state` for CSRF protection.
 2. Start a local HTTP callback server on `127.0.0.1:1455`.
-3. Build the authorization URL with parameters: `response_type=code`, `client_id`, `redirect_uri`, `code_challenge`, `code_challenge_method=S256`.
+3. Build the authorization URL with parameters: `response_type=code`, `client_id`, `redirect_uri`, `code_challenge`, `code_challenge_method=S256`, `state`.
 4. Open the browser to the authorization URL (print URL to terminal as fallback).
 5. User authenticates at `auth.openai.com`.
-6. OpenAI redirects to `http://localhost:1455/auth/callback?code=<code>`.
-7. Callback server captures the authorization code.
+6. OpenAI redirects to `http://localhost:1455/auth/callback?code=<code>&state=<state>`.
+7. Callback server captures the callback payload and validates `state`.
 8. Exchange code for tokens: POST to `TOKEN_URL` with `grant_type=authorization_code`, `client_id`, `redirect_uri`, `code`, `code_verifier`.
-9. Save tokens to `~/.vibemate/codex_auth.json` (`access_token`, `refresh_token`, `expires_at`).
+9. Save tokens to `~/.vibemate/auth/codex_auth.json` (`access_token`, `refresh_token`, `expires_at`).
 
 **Token Refresh:** Refresh access token if `last_refresh` is older than 8 days.
 
@@ -462,7 +471,7 @@ Headers are configured per-provider in the TOML config (not hardcoded by type). 
 | `SCOPE` | `org:create_api_key user:profile user:inference` |
 | `USAGE_URL` | `https://api.anthropic.com/api/oauth/usage` |
 | `ANTHROPIC_BETA` | `oauth-2025-04-20` |
-| Token file | `~/.vibemate/claude_auth.json` |
+| Token file | `~/.vibemate/auth/claude_auth.json` |
 
 **Flow:**
 
@@ -475,7 +484,7 @@ Headers are configured per-provider in the TOML config (not hardcoded by type). 
 7. **User copies and pastes the code into the terminal** (manual code paste, not a localhost callback).
 8. Validate that the `state` matches the expected value (CSRF protection).
 9. Exchange code at `TOKEN_URL` with `grant_type=authorization_code`, `client_id`, `redirect_uri`, `code`, `code_verifier`, `state`.
-10. Save tokens to `~/.vibemate/claude_auth.json`.
+10. Save tokens to `~/.vibemate/auth/claude_auth.json`.
 
 **Token Refresh:** POST to `TOKEN_URL` with `grant_type=refresh_token`, `refresh_token`, `client_id`. Refresh when token is within 5 minutes of expiry.
 

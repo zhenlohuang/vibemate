@@ -1,12 +1,14 @@
+use std::collections::HashSet;
 use std::io;
 
 use chrono::{Duration, Utc};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::error::{AppError, Result};
 use crate::oauth::pkce::{generate_challenge, generate_state, generate_verifier};
-use crate::oauth::token::{load_token, save_token, vibemate_dir, TokenData};
+use crate::oauth::token::{auth_file_path, load_token, save_token, TokenData};
 use crate::oauth::{UsageInfo, UsageWindow};
 
 pub const CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
@@ -16,6 +18,7 @@ pub const REDIRECT_URI: &str = "https://console.anthropic.com/oauth/code/callbac
 pub const SCOPE: &str = "org:create_api_key user:profile user:inference";
 pub const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 pub const ANTHROPIC_BETA: &str = "oauth-2025-04-20";
+const TOKEN_FILE_NAME: &str = "claude_auth.json";
 
 #[derive(Debug, Deserialize)]
 struct TokenResponse {
@@ -43,15 +46,34 @@ struct RefreshExchange<'a> {
 
 #[derive(Debug, Deserialize)]
 struct ClaudeUsageResponse {
-    five_hour: UsageBucket,
-    seven_day: UsageBucket,
-    seven_day_opus: UsageBucket,
+    five_hour: Option<UsageBucket>,
+    seven_day: Option<UsageBucket>,
+    seven_day_opus: Option<UsageBucket>,
+    #[serde(default)]
+    extra_usage: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
 struct UsageBucket {
-    utilization: f64,
+    utilization: Option<f64>,
     resets_at: Option<String>,
+}
+
+fn usage_window(name: &str, bucket: Option<UsageBucket>) -> Option<UsageWindow> {
+    let bucket = bucket?;
+    let utilization_pct = bucket.utilization?;
+    let resets_at = bucket.resets_at?;
+    if resets_at.trim().is_empty() {
+        return None;
+    }
+
+    Some(UsageWindow {
+        name: name.to_string(),
+        utilization_pct,
+        resets_at: Some(resets_at),
+        is_extra: false,
+        source_limit_name: None,
+    })
 }
 
 pub async fn login() -> Result<()> {
@@ -116,7 +138,7 @@ pub async fn login() -> Result<()> {
         last_refresh: Some(Utc::now()),
     };
 
-    let path = vibemate_dir()?.join("claude_auth.json");
+    let path = auth_file_path(TOKEN_FILE_NAME)?;
     save_token(&path, &token)?;
     Ok(())
 }
@@ -164,12 +186,302 @@ pub async fn refresh_if_needed(token: &mut TokenData) -> Result<()> {
     token.expires_at = now + Duration::seconds(payload.expires_in.unwrap_or(3600));
     token.last_refresh = Some(now);
 
-    let path = vibemate_dir()?.join("claude_auth.json");
+    let path = auth_file_path(TOKEN_FILE_NAME)?;
     save_token(&path, token)?;
     Ok(())
 }
 
 pub async fn get_usage(token: &TokenData) -> Result<UsageInfo> {
+    let value = get_usage_raw(token).await?;
+    parse_usage(value)
+}
+
+fn parse_usage(value: Value) -> Result<UsageInfo> {
+    let usage: ClaudeUsageResponse = serde_json::from_value(value)?;
+    let extra_usage = usage.extra_usage.clone();
+    let mut windows = Vec::new();
+    for maybe_window in [
+        usage_window("five-hour", usage.five_hour),
+        usage_window("seven-day", usage.seven_day),
+        usage_window("seven-day-opus", usage.seven_day_opus),
+    ] {
+        if let Some(window) = maybe_window {
+            windows.push(window);
+        }
+    }
+
+    if let Some(extra) = usage.extra_usage {
+        merge_extra_usage_windows(&mut windows, &extra);
+    }
+
+    Ok(UsageInfo {
+        agent_name: "claude-code".to_string(),
+        plan: None,
+        windows,
+        extra_usage,
+    })
+}
+
+fn merge_extra_usage_windows(windows: &mut Vec<UsageWindow>, extra: &Value) {
+    let mut seen: HashSet<String> = windows.iter().map(|w| w.name.clone()).collect();
+
+    if let Some(window) = parse_extra_window("extra-usage", extra) {
+        if seen.insert(window.name.clone()) {
+            windows.push(window);
+        }
+    }
+
+    if let Some(items) = extra.as_array() {
+        for (index, item) in items.iter().enumerate() {
+            let base_name = item
+                .get("name")
+                .or_else(|| item.get("quota_name"))
+                .or_else(|| item.get("window"))
+                .or_else(|| item.get("type"))
+                .and_then(Value::as_str)
+                .map(normalize_name)
+                .unwrap_or_else(|| format!("extra-{}", index + 1));
+            collect_extra_windows(item, &base_name, windows, &mut seen);
+        }
+        return;
+    }
+
+    if let Some(map) = extra.as_object() {
+        for (key, item) in map {
+            let base_name = normalize_name(key);
+            collect_extra_windows(item, &base_name, windows, &mut seen);
+        }
+    }
+}
+
+fn collect_extra_windows(
+    value: &Value,
+    base_name: &str,
+    windows: &mut Vec<UsageWindow>,
+    seen: &mut HashSet<String>,
+) {
+    if let Some(window) = parse_extra_window(base_name, value) {
+        if seen.insert(window.name.clone()) {
+            windows.push(window);
+        }
+    }
+
+    match value {
+        Value::Object(map) => {
+            for (key, child) in map {
+                let normalized_key = normalize_name(key);
+                let child_name = if is_passthrough_extra_key(&normalized_key) {
+                    base_name.to_string()
+                } else if normalized_key.is_empty() {
+                    base_name.to_string()
+                } else {
+                    format!("{base_name}-{normalized_key}")
+                };
+                collect_extra_windows(child, &child_name, windows, seen);
+            }
+        }
+        Value::Array(items) => {
+            for (index, item) in items.iter().enumerate() {
+                let child_base = item
+                    .get("name")
+                    .or_else(|| item.get("quota_name"))
+                    .or_else(|| item.get("window"))
+                    .or_else(|| item.get("type"))
+                    .and_then(Value::as_str)
+                    .map(normalize_name)
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or_else(|| format!("{base_name}-{}", index + 1));
+                collect_extra_windows(item, &child_base, windows, seen);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn is_passthrough_extra_key(key: &str) -> bool {
+    matches!(
+        key,
+        "usage"
+            | "window"
+            | "bucket"
+            | "current"
+            | "current-window"
+            | "rate-limit"
+            | "primary-window"
+            | "secondary-window"
+    )
+}
+
+fn parse_extra_window(name: &str, value: &Value) -> Option<UsageWindow> {
+    let utilization_pct = parse_utilization_pct(
+        value,
+        &[
+            "utilization",
+            "used_percent",
+            "utilization_pct",
+            "usage_percent",
+            "percent_used",
+        ],
+    );
+    let resets_at = parse_string(
+        value,
+        &[
+            "resets_at",
+            "reset_at",
+            "next_reset_at",
+            "resetAt",
+            "resetsAt",
+            "reset_after_seconds",
+            "reset_after",
+            "seconds_until_reset",
+            "period_end",
+            "cycle_end",
+            "billing_cycle_end",
+        ],
+    );
+    if utilization_pct.is_none() {
+        return None;
+    }
+    let resets_at = resets_at.filter(|value| !value.trim().is_empty());
+
+    Some(UsageWindow {
+        name: name.to_string(),
+        utilization_pct: utilization_pct.unwrap_or(0.0),
+        resets_at,
+        is_extra: true,
+        source_limit_name: None,
+    })
+}
+
+fn parse_number_raw(value: &Value, keys: &[&str]) -> Option<f64> {
+    for key in keys {
+        if let Some(v) = value.get(*key) {
+            if let Some(n) = v.as_f64() {
+                return Some(n);
+            }
+            if let Some(s) = v.as_str() {
+                if let Ok(n) = s.parse::<f64>() {
+                    return Some(n);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn parse_percent_field(value: &Value, keys: &[&str]) -> Option<f64> {
+    parse_number_raw(value, keys).map(|v| if v <= 1.0 { v * 100.0 } else { v })
+}
+
+fn parse_utilization_pct(value: &Value, keys: &[&str]) -> Option<f64> {
+    if let Some(v) = parse_percent_field(value, keys) {
+        return Some(v);
+    }
+
+    if let Some(v) = parse_number_raw(
+        value,
+        &[
+            "utilization_ratio",
+            "usage_ratio",
+            "percent_ratio",
+            "ratio",
+            "used_ratio",
+        ],
+    ) {
+        return Some(v * 100.0);
+    }
+
+    let used = parse_number_raw(
+        value,
+        &[
+            "used",
+            "consumed",
+            "total_used",
+            "current_usage",
+            "usage",
+            "spent",
+            "used_credits",
+        ],
+    );
+    let limit = parse_number_raw(
+        value,
+        &[
+            "limit",
+            "max",
+            "total",
+            "allowance",
+            "quota",
+            "monthly_limit",
+        ],
+    );
+    if let (Some(used), Some(limit)) = (used, limit) {
+        if limit > 0.0 {
+            return Some((used / limit) * 100.0);
+        }
+    }
+
+    let remaining = parse_number_raw(value, &["remaining", "left", "available"]);
+    if let (Some(remaining), Some(limit)) = (remaining, limit) {
+        if limit > 0.0 {
+            return Some(((limit - remaining) / limit) * 100.0);
+        }
+    }
+
+    None
+}
+
+fn parse_string(value: &Value, keys: &[&str]) -> Option<String> {
+    for key in keys {
+        if let Some(field) = value.get(*key) {
+            if let Some(seconds) = field.as_i64() {
+                if key.ends_with("after_seconds")
+                    || key.ends_with("after")
+                    || key.ends_with("until_reset")
+                {
+                    let ts = Utc::now().timestamp().saturating_add(seconds);
+                    if let Some(dt) = chrono::DateTime::<Utc>::from_timestamp(ts, 0) {
+                        return Some(dt.to_rfc3339());
+                    }
+                }
+            }
+            if let Some(seconds) = field.as_u64() {
+                if key.ends_with("after_seconds")
+                    || key.ends_with("after")
+                    || key.ends_with("until_reset")
+                {
+                    if let Ok(sec_i64) = i64::try_from(seconds) {
+                        let ts = Utc::now().timestamp().saturating_add(sec_i64);
+                        if let Some(dt) = chrono::DateTime::<Utc>::from_timestamp(ts, 0) {
+                            return Some(dt.to_rfc3339());
+                        }
+                    }
+                }
+            }
+            if let Some(s) = field.as_str() {
+                return Some(s.to_string());
+            }
+            if let Some(ts) = field.as_i64() {
+                if let Some(dt) = chrono::DateTime::<Utc>::from_timestamp(ts, 0) {
+                    return Some(dt.to_rfc3339());
+                }
+            }
+            if let Some(ts) = field.as_u64() {
+                if let Ok(ts_i64) = i64::try_from(ts) {
+                    if let Some(dt) = chrono::DateTime::<Utc>::from_timestamp(ts_i64, 0) {
+                        return Some(dt.to_rfc3339());
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn normalize_name(input: &str) -> String {
+    input.trim().to_ascii_lowercase().replace([' ', '_'], "-")
+}
+
+pub async fn get_usage_raw(token: &TokenData) -> Result<Value> {
     let client = reqwest::Client::new();
     let response = client
         .get(USAGE_URL)
@@ -191,32 +503,79 @@ pub async fn get_usage(token: &TokenData) -> Result<UsageInfo> {
         )));
     }
 
-    let usage: ClaudeUsageResponse = response.json().await?;
-
-    Ok(UsageInfo {
-        agent_name: "claude-code".to_string(),
-        plan: None,
-        windows: vec![
-            UsageWindow {
-                name: "five-hour".to_string(),
-                utilization_pct: usage.five_hour.utilization,
-                resets_at: usage.five_hour.resets_at,
-            },
-            UsageWindow {
-                name: "seven-day".to_string(),
-                utilization_pct: usage.seven_day.utilization,
-                resets_at: usage.seven_day.resets_at,
-            },
-            UsageWindow {
-                name: "seven-day-opus".to_string(),
-                utilization_pct: usage.seven_day_opus.utilization,
-                resets_at: usage.seven_day_opus.resets_at,
-            },
-        ],
-    })
+    let value: Value = response.json().await?;
+    Ok(value)
 }
 
 pub async fn load_saved_token() -> Result<Option<TokenData>> {
-    let path = vibemate_dir()?.join("claude_auth.json");
+    let path = auth_file_path(TOKEN_FILE_NAME)?;
     load_token(&path)
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::parse_usage;
+
+    #[test]
+    fn parse_usage_includes_extra_usage_object() {
+        let value = json!({
+            "five_hour": { "utilization": 6.0, "resets_at": "2026-02-27T20:00:00Z" },
+            "seven_day": { "utilization": 1.0, "resets_at": "2026-03-06T15:00:00Z" },
+            "seven_day_opus": null,
+            "extra_usage": {
+                "sonnet_4": { "used_percent": 23, "reset_at": 1772760122 }
+            }
+        });
+
+        let usage = parse_usage(value).expect("parse should succeed");
+        assert!(usage
+            .windows
+            .iter()
+            .any(|w| { w.name == "sonnet-4" && (w.utilization_pct - 23.0).abs() < 0.0001 }));
+    }
+
+    #[test]
+    fn parse_usage_includes_extra_usage_used_limit_and_reset_after() {
+        let value = json!({
+            "five_hour": { "utilization": 6.0, "resets_at": "2026-02-27T20:00:00Z" },
+            "seven_day": { "utilization": 1.0, "resets_at": "2026-03-06T15:00:00Z" },
+            "seven_day_opus": null,
+            "extra_usage": {
+                "sonnet_4": { "used": 30, "limit": 100, "reset_after_seconds": 3600 }
+            }
+        });
+
+        let usage = parse_usage(value).expect("parse should succeed");
+        assert!(usage.windows.iter().any(|w| {
+            w.name == "sonnet-4"
+                && (w.utilization_pct - 30.0).abs() < 0.0001
+                && w.resets_at.is_some()
+        }));
+    }
+
+    #[test]
+    fn parse_usage_includes_monthly_extra_usage_aggregate_object() {
+        let value = json!({
+            "five_hour": { "utilization": 7.0, "resets_at": "2026-02-27T20:00:00Z" },
+            "seven_day": { "utilization": 1.0, "resets_at": "2026-03-06T15:00:00Z" },
+            "extra_usage": {
+                "is_enabled": true,
+                "monthly_limit": 6500,
+                "used_credits": 0.0,
+                "utilization": null
+            }
+        });
+
+        let usage = parse_usage(value).expect("parse should succeed");
+        let extra = usage
+            .windows
+            .iter()
+            .find(|w| w.name == "extra-usage")
+            .expect("extra usage window should exist");
+        assert!(extra.is_extra);
+        assert!(extra.resets_at.is_none());
+        assert!(extra.utilization_pct.abs() < 0.0001);
+    }
 }

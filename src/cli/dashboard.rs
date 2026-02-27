@@ -12,7 +12,7 @@ use tokio::sync::{broadcast, mpsc};
 
 use crate::config::AppConfig;
 use crate::error::Result;
-use crate::oauth::token::{save_token, vibemate_dir};
+use crate::oauth::token::{auth_file_path, save_token};
 use crate::oauth::{claude, codex, UsageInfo};
 use crate::proxy;
 use crate::tui::app::App;
@@ -113,8 +113,8 @@ async fn collect_usage() -> UsageUpdate {
             if let Err(err) = codex::refresh_if_needed(&mut token).await {
                 errors.push(format!("codex refresh error: {err}"));
             } else {
-                let path = match vibemate_dir() {
-                    Ok(path) => path.join("codex_auth.json"),
+                let path = match auth_file_path("codex_auth.json") {
+                    Ok(path) => path,
                     Err(err) => {
                         errors.push(format!("token directory error: {err}"));
                         return UsageUpdate {
@@ -141,8 +141,8 @@ async fn collect_usage() -> UsageUpdate {
             if let Err(err) = claude::refresh_if_needed(&mut token).await {
                 errors.push(format!("claude-code refresh error: {err}"));
             } else {
-                let path = match vibemate_dir() {
-                    Ok(path) => path.join("claude_auth.json"),
+                let path = match auth_file_path("claude_auth.json") {
+                    Ok(path) => path,
                     Err(err) => {
                         errors.push(format!("token directory error: {err}"));
                         return UsageUpdate {

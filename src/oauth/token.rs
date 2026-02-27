@@ -45,3 +45,13 @@ pub fn vibemate_dir() -> Result<PathBuf> {
     fs::create_dir_all(&dir)?;
     Ok(dir)
 }
+
+pub fn auth_dir() -> Result<PathBuf> {
+    let dir = vibemate_dir()?.join("auth");
+    fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
+
+pub fn auth_file_path(file_name: &str) -> Result<PathBuf> {
+    Ok(auth_dir()?.join(file_name))
+}

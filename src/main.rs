@@ -28,7 +28,12 @@ enum Commands {
     Login {
         agent: String,
     },
-    Usage,
+    Usage {
+        #[arg(long, conflicts_with = "raw")]
+        json: bool,
+        #[arg(long, conflicts_with = "json")]
+        raw: bool,
+    },
     Proxy,
     Dashboard,
     Config {
@@ -52,7 +57,9 @@ async fn main() -> anyhow::Result<()> {
             let config = load_config(&config_path)?;
             match command {
                 Commands::Login { agent } => cli::login::run(&agent, &config).await,
-                Commands::Usage => cli::usage::run(&config).await,
+                Commands::Usage { json, raw } => {
+                    cli::usage::run(&config, cli::usage::UsageOptions { json, raw }).await
+                }
                 Commands::Proxy => cli::proxy::run(&config).await,
                 Commands::Dashboard => cli::dashboard::run(&config).await,
                 Commands::Config { .. } => unreachable!("handled above"),

@@ -25,6 +25,7 @@ pub struct ServerConfig {
     pub host: String,
     pub port: u16,
     pub proxy: Option<String>,
+    pub show_extra_quota: bool,
 }
 
 impl Default for ServerConfig {
@@ -33,6 +34,7 @@ impl Default for ServerConfig {
             host: "127.0.0.1".to_string(),
             port: 12_345,
             proxy: Some("socks5://127.0.0.1:7890".to_string()),
+            show_extra_quota: false,
         }
     }
 }

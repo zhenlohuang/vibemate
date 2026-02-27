@@ -5,37 +5,45 @@ use axum::response::Html;
 use axum::routing::get;
 use axum::Router;
 use serde::Deserialize;
+use tokio::net::TcpListener;
 use tokio::sync::{oneshot, Mutex};
 
 use crate::error::{AppError, Result};
 
+#[derive(Debug, Clone)]
+pub struct CallbackPayload {
+    pub code: Option<String>,
+    pub state: Option<String>,
+    pub error: Option<String>,
+    pub error_description: Option<String>,
+}
+
 #[derive(Clone)]
 struct CallbackState {
-    code_tx: Arc<Mutex<Option<oneshot::Sender<String>>>>,
+    payload_tx: Arc<Mutex<Option<oneshot::Sender<CallbackPayload>>>>,
     shutdown_tx: Arc<Mutex<Option<oneshot::Sender<()>>>>,
 }
 
 #[derive(Debug, Deserialize)]
 struct CallbackQuery {
     code: Option<String>,
+    state: Option<String>,
+    error: Option<String>,
+    error_description: Option<String>,
 }
 
-pub async fn start_callback_server(port: u16) -> Result<String> {
-    let (code_tx, code_rx) = oneshot::channel::<String>();
+pub async fn start_callback_server(listener: TcpListener) -> Result<CallbackPayload> {
+    let (payload_tx, payload_rx) = oneshot::channel::<CallbackPayload>();
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
     let state = CallbackState {
-        code_tx: Arc::new(Mutex::new(Some(code_tx))),
+        payload_tx: Arc::new(Mutex::new(Some(payload_tx))),
         shutdown_tx: Arc::new(Mutex::new(Some(shutdown_tx))),
     };
 
     let app = Router::new()
         .route("/auth/callback", get(callback_handler))
         .with_state(state);
-
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
-        .await
-        .map_err(|e| AppError::OAuth(format!("Failed to bind callback server: {e}")))?;
 
     let server = axum::serve(listener, app).with_graceful_shutdown(async move {
         let _ = shutdown_rx.await;
@@ -47,30 +55,43 @@ pub async fn start_callback_server(port: u16) -> Result<String> {
         }
     });
 
-    let code = code_rx
-        .await
-        .map_err(|_| AppError::OAuth("Callback server closed before receiving code".to_string()))?;
+    let payload = payload_rx.await.map_err(|_| {
+        AppError::OAuth("Callback server closed before receiving response".to_string())
+    })?;
 
     let _ = server_task.await;
-    Ok(code)
+    Ok(payload)
 }
 
 async fn callback_handler(
     State(state): State<CallbackState>,
     Query(query): Query<CallbackQuery>,
 ) -> Html<&'static str> {
-    let Some(code) = query.code else {
-        return Html(
-            "<html><body><h1>Missing code</h1><p>OAuth callback did not include a code parameter.</p></body></html>",
-        );
+    let payload = CallbackPayload {
+        code: query.code.clone(),
+        state: query.state.clone(),
+        error: query.error.clone(),
+        error_description: query.error_description.clone(),
     };
 
-    if let Some(tx) = state.code_tx.lock().await.take() {
-        let _ = tx.send(code);
+    if let Some(tx) = state.payload_tx.lock().await.take() {
+        let _ = tx.send(payload);
     }
 
     if let Some(tx) = state.shutdown_tx.lock().await.take() {
         let _ = tx.send(());
+    }
+
+    if query.error.is_some() {
+        return Html(
+            "<html><body><h1>OAuth failed</h1><p>OAuth callback returned an error. Check terminal logs for details.</p></body></html>",
+        );
+    }
+
+    if query.code.is_none() {
+        return Html(
+            "<html><body><h1>Missing code</h1><p>OAuth callback did not include a code parameter.</p></body></html>",
+        );
     }
 
     Html("<html><body><h1>Vibemate login complete</h1><p>You can close this tab.</p></body></html>")
