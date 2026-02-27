@@ -90,6 +90,7 @@ async fn run_dashboard_loop(
                     .modifiers
                     .contains(crossterm::event::KeyModifiers::CONTROL);
                 match key.code {
+                    KeyCode::Esc => break,
                     KeyCode::Char('q') => break,
                     KeyCode::Char('c') if ctrl => break,
                     KeyCode::Char('r') => {
@@ -173,7 +174,7 @@ async fn collect_usage(show_extra_quota: bool) -> UsageUpdate {
     }
 
     let message = if errors.is_empty() {
-        Some("q:quit  r:refresh  Tab:switch page  j/k:scroll".to_string())
+        Some("q/esc:quit  r:refresh  Tab:switch page  j/k:scroll".to_string())
     } else {
         Some(errors.join(" | "))
     };
