@@ -140,7 +140,7 @@ pub async fn run(config: &AppConfig, options: UsageOptions) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&output)?);
     } else {
         if !usage_results.is_empty() {
-            print_usage_table(&usage_results, config.server.show_extra_quota);
+            print_usage_table(&usage_results, config.show_extra_quota());
         }
         if !errors.is_empty() {
             eprintln!("\nUsage warnings");

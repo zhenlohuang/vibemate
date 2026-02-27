@@ -10,7 +10,10 @@ const DEFAULT_CONFIG: &str = r#"[server]
 host = "127.0.0.1"
 port = 12345
 proxy = "socks5://127.0.0.1:7890"
+
+[agents]
 show_extra_quota = false
+usage_refresh_interval_secs = 300
 
 [routing]
 default_provider = "openai-official"
@@ -24,8 +27,12 @@ host = "127.0.0.1"
 port = 12345
 # Optional upstream HTTP/SOCKS proxy used for outbound provider requests
 proxy = "socks5://127.0.0.1:7890"
-# Show extra quotas (for example Codex additional_rate_limits) in `vibemate usage` table output
+
+[agents]
+# Show extra quotas (for example Codex additional_rate_limits) in `vibemate usage` and dashboard output
 show_extra_quota = false
+# Usage polling interval for dashboard in seconds (default 300s = 5min)
+usage_refresh_interval_secs = 300
 
 # Provider definitions map provider names to base URLs + auth headers.
 # `api_key` will auto-generate `Authorization = "Bearer <api_key>"`.

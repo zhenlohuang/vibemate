@@ -50,14 +50,15 @@ async fn run_dashboard_loop(
     let proxy_task = tokio::spawn(async move { proxy::server::start(&proxy_config, log_tx).await });
 
     let usage_task_tx = usage_tx.clone();
-    let show_extra_quota = config.server.show_extra_quota;
+    let show_extra_quota = config.show_extra_quota();
+    let usage_refresh_interval = config.usage_refresh_interval();
     let usage_task = tokio::spawn(async move {
         loop {
             let update = collect_usage(show_extra_quota).await;
             if usage_task_tx.send(update).await.is_err() {
                 break;
             }
-            tokio::time::sleep(Duration::from_secs(60)).await;
+            tokio::time::sleep(usage_refresh_interval).await;
         }
     });
 
@@ -94,7 +95,7 @@ async fn run_dashboard_loop(
                     KeyCode::Char('q') => break,
                     KeyCode::Char('c') if ctrl => break,
                     KeyCode::Char('r') => {
-                        let update = collect_usage(config.server.show_extra_quota).await;
+                        let update = collect_usage(config.show_extra_quota()).await;
                         app.usage = update.usage;
                         app.status_message = update.message;
                     }

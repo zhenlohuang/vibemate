@@ -135,7 +135,11 @@ fn render_window(
     // Line 2: Left bar + right percentage text
     let bar_row = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Min(10), Constraint::Length(2), Constraint::Length(10)])
+        .constraints([
+            Constraint::Min(10),
+            Constraint::Length(2),
+            Constraint::Length(10),
+        ])
         .split(rows[base + 1]);
 
     let gauge = Gauge::default()
