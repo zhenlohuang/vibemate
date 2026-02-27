@@ -65,20 +65,14 @@ async fn forward_request(
     let mut body_json = match serde_json::from_slice::<Value>(&body) {
         Ok(v) => v,
         Err(err) => {
-            return error_response(
-                StatusCode::BAD_REQUEST,
-                format!("Invalid JSON body: {err}"),
-            );
+            return error_response(StatusCode::BAD_REQUEST, format!("Invalid JSON body: {err}"));
         }
     };
 
     let original_model = match body_json.get("model").and_then(Value::as_str) {
         Some(model) => model.to_string(),
         None => {
-            return error_response(
-                StatusCode::BAD_REQUEST,
-                AppError::MissingModel.to_string(),
-            );
+            return error_response(StatusCode::BAD_REQUEST, AppError::MissingModel.to_string());
         }
     };
 
@@ -176,7 +170,10 @@ async fn forward_request(
         return relay_sse_stream(upstream_response);
     }
 
-    let content_type = upstream_response.headers().get(header::CONTENT_TYPE).cloned();
+    let content_type = upstream_response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .cloned();
     let body_bytes = match upstream_response.bytes().await {
         Ok(bytes) => bytes,
         Err(err) => {
@@ -192,9 +189,12 @@ async fn forward_request(
         response = response.header(header::CONTENT_TYPE, content_type);
     }
 
-    response
-        .body(Body::from(body_bytes))
-        .unwrap_or_else(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "Failed to build response"))
+    response.body(Body::from(body_bytes)).unwrap_or_else(|_| {
+        error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to build response",
+        )
+    })
 }
 
 fn error_response(status: StatusCode, message: impl Into<String>) -> Response {

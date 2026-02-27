@@ -73,7 +73,5 @@ async fn callback_handler(
         let _ = tx.send(());
     }
 
-    Html(
-        "<html><body><h1>Vibemate login complete</h1><p>You can close this tab.</p></body></html>",
-    )
+    Html("<html><body><h1>Vibemate login complete</h1><p>You can close this tab.</p></body></html>")
 }

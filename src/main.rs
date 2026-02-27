@@ -14,7 +14,7 @@ use tracing_subscriber::{EnvFilter, FmtSubscriber};
 use crate::error::Result;
 
 #[derive(Parser, Debug)]
-#[command(name = "vibemate", version, about = "AI model proxy and usage dashboard")]
+#[command(name = "vibemate", version, about = "Your Vibe Coding mate")]
 struct Cli {
     #[arg(long, default_value = "~/.vibemate/config.toml")]
     config: PathBuf,
@@ -25,24 +25,39 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    Login { agent: String },
+    Login {
+        agent: String,
+    },
     Usage,
     Proxy,
     Dashboard,
+    Config {
+        #[arg(long)]
+        init: bool,
+    },
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     init_tracing();
 
-    let cli = Cli::parse();
-    let config = load_config(&cli.config)?;
+    let Cli {
+        config: config_path,
+        command,
+    } = Cli::parse();
 
-    let result: Result<()> = match cli.command {
-        Commands::Login { agent } => cli::login::run(&agent, &config).await,
-        Commands::Usage => cli::usage::run(&config).await,
-        Commands::Proxy => cli::proxy::run(&config).await,
-        Commands::Dashboard => cli::dashboard::run(&config).await,
+    let result: Result<()> = match command {
+        Commands::Config { init } => cli::config::run(init, &config_path),
+        command => {
+            let config = load_config(&config_path)?;
+            match command {
+                Commands::Login { agent } => cli::login::run(&agent, &config).await,
+                Commands::Usage => cli::usage::run(&config).await,
+                Commands::Proxy => cli::proxy::run(&config).await,
+                Commands::Dashboard => cli::dashboard::run(&config).await,
+                Commands::Config { .. } => unreachable!("handled above"),
+            }
+        }
     };
 
     result.map_err(anyhow::Error::from)
@@ -50,6 +65,8 @@ async fn main() -> anyhow::Result<()> {
 
 fn init_tracing() {
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-    let subscriber = FmtSubscriber::builder().with_env_filter(env_filter).finish();
+    let subscriber = FmtSubscriber::builder()
+        .with_env_filter(env_filter)
+        .finish();
     let _ = tracing::subscriber::set_global_default(subscriber);
 }

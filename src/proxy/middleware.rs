@@ -16,11 +16,14 @@ pub fn apply_middleware(router: Router) -> Router {
 }
 
 async fn request_id_middleware(mut req: Request, next: Next) -> Response {
-    let request_id = REQUEST_ID_COUNTER.fetch_add(1, Ordering::Relaxed).to_string();
+    let request_id = REQUEST_ID_COUNTER
+        .fetch_add(1, Ordering::Relaxed)
+        .to_string();
     let header_name = HeaderName::from_static("x-request-id");
 
     if let Ok(header_value) = HeaderValue::from_str(&request_id) {
-        req.headers_mut().insert(header_name.clone(), header_value.clone());
+        req.headers_mut()
+            .insert(header_name.clone(), header_value.clone());
         let mut response = next.run(req).await;
         response.headers_mut().insert(header_name, header_value);
         return response;

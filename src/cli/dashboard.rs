@@ -3,7 +3,9 @@ use std::time::Duration;
 
 use crossterm::event::{self, Event, KeyCode};
 use crossterm::execute;
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
+use crossterm::terminal::{
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+};
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 use tokio::sync::{broadcast, mpsc};
@@ -58,7 +60,10 @@ async fn run_dashboard_loop(
         }
     });
 
-    let mut app = App::new(format!("http://{}:{}", config.server.host, config.server.port));
+    let mut app = App::new(format!(
+        "http://{}:{}",
+        config.server.host, config.server.port
+    ));
     app.proxy_running = true;
 
     loop {

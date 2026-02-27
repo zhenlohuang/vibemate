@@ -9,10 +9,52 @@ use std::path::{Path, PathBuf};
 const DEFAULT_CONFIG: &str = r#"[server]
 host = "127.0.0.1"
 port = 12345
+proxy = "socks5://127.0.0.1:7890"
 
 [routing]
 default_provider = "openai-official"
 rules = []
+"#;
+
+pub const DEFAULT_FULL_CONFIG: &str = r#"# Vibemate configuration
+
+[server]
+host = "127.0.0.1"
+port = 12345
+# Optional upstream HTTP/SOCKS proxy used for outbound provider requests
+proxy = "socks5://127.0.0.1:7890"
+
+# Provider definitions map provider names to base URLs + auth headers.
+# `api_key` will auto-generate `Authorization = "Bearer <api_key>"`.
+[providers.openai-official]
+base_url = "https://api.openai.com/v1"
+api_key = "sk-your-openai-api-key"
+
+#[providers.openrouter]
+#base_url = "https://openrouter.ai/api/v1"
+#api_key = "sk-or-v1-your-openrouter-key"
+#headers = {
+#  "HTTP-Referer" = "https://example.com",
+#  "X-Title" = "Vibemate"
+#}
+
+#[providers.anthropic]
+#base_url = "https://api.anthropic.com/v1"
+#headers = {
+#  "x-api-key" = "sk-ant-your-anthropic-key",
+#  "anthropic-version" = "2023-06-01"
+#}
+
+[routing]
+default_provider = "openai-official"
+rules = [
+  # Route all GPT-4o requests through openai-official
+  #{ pattern = "gpt-4o*", provider = "openai-official" },
+  # Example: route Claude models to anthropic
+  #{ pattern = "claude-*", provider = "anthropic" },
+  # Example: rewrite models while routing
+  #{ pattern = "o1-mini", provider = "openrouter", model = "openai/o1-mini" }
+]
 "#;
 
 pub fn load_config(path: &Path) -> Result<AppConfig> {
@@ -33,13 +75,14 @@ pub fn load_config(path: &Path) -> Result<AppConfig> {
 }
 
 fn ensure_vibemate_dir() -> Result<PathBuf> {
-    let home = dirs::home_dir().ok_or_else(|| AppError::Config("Unable to find home directory".to_string()))?;
+    let home = dirs::home_dir()
+        .ok_or_else(|| AppError::Config("Unable to find home directory".to_string()))?;
     let dir = home.join(".vibemate");
     fs::create_dir_all(&dir)?;
     Ok(dir)
 }
 
-fn expand_tilde(path: &Path) -> PathBuf {
+pub fn expand_tilde(path: &Path) -> PathBuf {
     let raw = path.to_string_lossy();
     if raw == "~" {
         if let Some(home) = dirs::home_dir() {

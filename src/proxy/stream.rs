@@ -1,8 +1,8 @@
 use std::convert::Infallible;
 use std::io;
 
-use axum::response::{IntoResponse, Response, Sse};
 use axum::response::sse::Event;
+use axum::response::{IntoResponse, Response, Sse};
 use futures::StreamExt;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio_util::io::StreamReader;

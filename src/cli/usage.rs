@@ -21,7 +21,9 @@ pub async fn run(_config: &AppConfig) -> Result<()> {
     }
 
     if results.is_empty() {
-        println!("No login tokens found. Run `vibemate login codex` or `vibemate login claude-code`.");
+        println!(
+            "No login tokens found. Run `vibemate login codex` or `vibemate login claude-code`."
+        );
         return Ok(());
     }
 
@@ -37,7 +39,10 @@ fn print_usage_table(items: &[UsageInfo]) {
         let plan = item.plan.clone().unwrap_or_else(|| "unknown".to_string());
         println!("\nAgent: {} (plan: {})", item.agent_name, plan);
         for window in &item.windows {
-            let reset = window.resets_at.clone().unwrap_or_else(|| "n/a".to_string());
+            let reset = window
+                .resets_at
+                .clone()
+                .unwrap_or_else(|| "n/a".to_string());
             println!(
                 "  - {:14} {:>6.2}%   resets_at={} ",
                 window.name, window.utilization_pct, reset

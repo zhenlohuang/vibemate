@@ -43,7 +43,8 @@ pub async fn login() -> Result<()> {
     let verifier = generate_verifier();
     let challenge = generate_challenge(&verifier);
 
-    let mut auth_url = Url::parse(AUTH_URL).map_err(|e| AppError::OAuth(format!("Invalid AUTH_URL: {e}")))?;
+    let mut auth_url =
+        Url::parse(AUTH_URL).map_err(|e| AppError::OAuth(format!("Invalid AUTH_URL: {e}")))?;
     auth_url
         .query_pairs_mut()
         .append_pair("response_type", "code")
@@ -55,7 +56,9 @@ pub async fn login() -> Result<()> {
     let callback = tokio::spawn(crate::oauth::callback::start_callback_server(CALLBACK_PORT));
 
     let auth_url_string = auth_url.to_string();
-    tracing::info!("Open this URL in your browser if it does not open automatically: {auth_url_string}");
+    tracing::info!(
+        "Open this URL in your browser if it does not open automatically: {auth_url_string}"
+    );
     let _ = open::that(&auth_url_string);
 
     let code = callback

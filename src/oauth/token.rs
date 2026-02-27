@@ -39,7 +39,8 @@ pub fn is_expired(token: &TokenData) -> bool {
 }
 
 pub fn vibemate_dir() -> Result<PathBuf> {
-    let home = dirs::home_dir().ok_or_else(|| AppError::Config("Unable to find home directory".to_string()))?;
+    let home = dirs::home_dir()
+        .ok_or_else(|| AppError::Config("Unable to find home directory".to_string()))?;
     let dir = home.join(".vibemate");
     fs::create_dir_all(&dir)?;
     Ok(dir)

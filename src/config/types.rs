@@ -32,7 +32,7 @@ impl Default for ServerConfig {
         Self {
             host: "127.0.0.1".to_string(),
             port: 12_345,
-            proxy: None,
+            proxy: Some("socks5://127.0.0.1:7890".to_string()),
         }
     }
 }
@@ -40,6 +40,9 @@ impl Default for ServerConfig {
 #[derive(Debug, Deserialize, Clone)]
 pub struct ProviderConfig {
     pub base_url: String,
+    #[serde(default)]
+    pub api_key: Option<String>,
+    #[serde(default)]
     pub headers: HashMap<String, String>,
 }
 
