@@ -23,6 +23,9 @@ pub enum AppError {
     #[error("Token expired for {agent}. Please run `vibemate login {agent}`")]
     TokenExpired { agent: String },
 
+    #[error("Agent '{agent}' does not support capability '{capability}'")]
+    UnsupportedCapability { agent: String, capability: String },
+
     #[error("Provider not found: {0}")]
     ProviderNotFound(String),
 

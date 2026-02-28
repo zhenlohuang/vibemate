@@ -1,8 +1,8 @@
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Gauge, Paragraph};
 
+use crate::agent::{UsageInfo, UsageWindow};
 use crate::cli::usage::{derive_display_name, should_display_window};
-use crate::oauth::{UsageInfo, UsageWindow};
 use chrono::{DateTime, Datelike, Local, Timelike};
 
 /// Count visible rows for one agent: 4 lines per window + 1 separator if both groups present.

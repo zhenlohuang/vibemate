@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use crate::oauth::UsageInfo;
+use crate::agent::UsageInfo;
 use crate::proxy::RequestLog;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

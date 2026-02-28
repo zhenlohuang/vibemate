@@ -1,10 +1,10 @@
+use crate::agent::global_agent_registry;
 use crate::config::AppConfig;
 use crate::error::{AppError, Result};
-use crate::oauth::global_agent_registry;
 
 pub async fn run(agent: &str, _config: &AppConfig) -> Result<()> {
     let registry = global_agent_registry();
-    let oauth_agent = registry.get(agent).ok_or_else(|| {
+    let agent_impl = registry.get(agent).ok_or_else(|| {
         let supported = registry
             .supported_ids()
             .into_iter()
@@ -13,16 +13,19 @@ pub async fn run(agent: &str, _config: &AppConfig) -> Result<()> {
             .join(", ");
         AppError::OAuth(format!("Unsupported agent '{agent}'. Use {supported}"))
     })?;
+    let auth = agent_impl
+        .auth_capability()
+        .ok_or_else(|| AppError::UnsupportedCapability {
+            agent: agent.to_string(),
+            capability: "auth".to_string(),
+        })?;
 
     println!(
         "Starting {} OAuth flow...",
-        oauth_agent.descriptor().display_name
+        agent_impl.descriptor().display_name
     );
-    oauth_agent.login().await?;
-    println!(
-        "{} login successful.",
-        oauth_agent.descriptor().display_name
-    );
+    auth.login().await?;
+    println!("{} login successful.", agent_impl.descriptor().display_name);
 
     Ok(())
 }

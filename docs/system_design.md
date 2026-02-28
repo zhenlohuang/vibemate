@@ -56,13 +56,18 @@ vibemate/
       handler.rs               # Request handler (forward + stream)
       middleware.rs             # Logging middleware, request ID
       stream.rs                # SSE streaming utilities
-    oauth/
-      mod.rs                   # OAuth module root, trait definition
-      codex.rs                 # OpenAI Codex OAuth + usage
-      claude.rs                # Anthropic Claude Code OAuth + usage
-      token.rs                 # Token storage, refresh, types
-      pkce.rs                  # PKCE challenge/verifier generation
-      callback.rs              # Local HTTP callback server
+    agent/
+      mod.rs                   # Agent module root, shared exports
+      types.rs                 # UsageInfo/UsageWindow/AgentDescriptor
+      traits.rs                # AgentIdentity/AuthCapability/UsageCapability
+      registry.rs              # Agent registry + global singleton
+      auth/
+        token.rs               # Token storage, refresh, types
+        pkce.rs                # PKCE challenge/verifier generation
+        callback.rs            # Local HTTP callback server
+      impls/
+        codex.rs               # OpenAI Codex OAuth + usage
+        claude.rs              # Anthropic Claude Code OAuth + usage
     provider/
       mod.rs                   # Provider trait + registry
       openai.rs                # OpenAI provider (forward requests)
@@ -96,8 +101,8 @@ Vibemate follows a layered architecture where each layer has well-defined respon
 +------------------+     +------------------+
          |                        |
 +------------------+     +------------------+
-|  Router Layer    |     |   OAuth Layer    |
-|  (model routing) |     |   (login/usage)  |
+|  Router Layer    |     |   Agent Layer    |
+|  (model routing) |     |   (auth/usage)   |
 +------------------+     +------------------+
          |                        |
 +------------------+     +------------------+
@@ -245,16 +250,31 @@ impl ModelRouter {
 
 Routing rules use glob-style wildcard matching (`*` matches any sequence of characters). Rules are evaluated in order; the first match wins. If no rule matches, the `default_provider` is used and the original model name is preserved.
 
-### 4.5 OAuth (`src/oauth/`)
+### 4.5 Agent (`src/agent/`)
 
 ```rust
+pub trait AgentIdentity: Send + Sync {
+    fn descriptor(&self) -> &'static AgentDescriptor;
+}
+
 #[async_trait]
-pub trait OAuthAgent: Send + Sync {
-    fn name(&self) -> &str;
+pub trait AgentAuthCapability: Send + Sync {
     async fn login(&self) -> Result<()>;
-    fn is_logged_in(&self) -> bool;
-    async fn get_usage(&self) -> Result<UsageInfo>;
-    async fn refresh_if_needed(&mut self) -> Result<()>;
+    async fn load_saved_token(&self) -> Result<Option<AgentToken>>;
+    async fn refresh_if_needed(&self, token: &mut AgentToken) -> Result<()>;
+}
+
+#[async_trait]
+pub trait AgentUsageCapability: Send + Sync {
+    async fn get_usage(&self, token: &AgentToken) -> Result<UsageInfo>;
+    async fn get_usage_raw(&self, token: &AgentToken) -> Result<Value>;
+    fn quota_name(&self, window: &UsageWindow) -> String;
+    fn display_quota_name(&self, window: &UsageWindow) -> String;
+}
+
+pub trait Agent: AgentIdentity + Send + Sync {
+    fn auth_capability(&self) -> Option<&dyn AgentAuthCapability>;
+    fn usage_capability(&self) -> Option<&dyn AgentUsageCapability>;
 }
 
 pub struct UsageInfo {
@@ -665,13 +685,13 @@ The `oauth2` crate is **intentionally omitted**. Both Codex and Claude Code use 
 - Implement `config/` module with TOML loading and defaults.
 - Implement `error.rs`.
 
-### Phase 2 — OAuth
+### Phase 2 — Agent Auth/Usage
 
-- Implement `oauth/pkce.rs` (PKCE challenge/verifier generation).
-- Implement `oauth/token.rs` (token storage and refresh logic).
-- Implement `oauth/callback.rs` (local HTTP server for Codex OAuth callback).
-- Implement `oauth/codex.rs` (Codex login + usage query).
-- Implement `oauth/claude.rs` (Claude Code login + usage query).
+- Implement `agent/auth/pkce.rs` (PKCE challenge/verifier generation).
+- Implement `agent/auth/token.rs` (token storage and refresh logic).
+- Implement `agent/auth/callback.rs` (local HTTP callback server for Codex OAuth callback).
+- Implement `agent/impls/codex.rs` (Codex login + usage query).
+- Implement `agent/impls/claude.rs` (Claude Code login + usage query).
 - Implement `cli/login.rs` and `cli/usage.rs`.
 
 ### Phase 3 — Proxy Server

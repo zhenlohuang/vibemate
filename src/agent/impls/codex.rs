@@ -7,12 +7,13 @@ use std::collections::HashSet;
 use std::io::ErrorKind;
 use url::Url;
 
-use crate::error::{AppError, Result};
-use crate::oauth::pkce::{generate_challenge, generate_state, generate_verifier};
-use crate::oauth::token::{auth_file_path, load_token, save_token, TokenData};
-use crate::oauth::{
-    normalize_quota_display_name, AgentDescriptor, OAuthAgent, UsageInfo, UsageWindow,
+use crate::agent::auth::pkce::{generate_challenge, generate_state, generate_verifier};
+use crate::agent::auth::token::{auth_file_path, load_token, save_token, AgentToken};
+use crate::agent::{
+    normalize_quota_display_name, Agent, AgentAuthCapability, AgentDescriptor, AgentIdentity,
+    AgentUsageCapability, UsageInfo, UsageWindow,
 };
+use crate::error::{AppError, Result};
 
 pub const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 pub const AUTH_URL: &str = "https://auth.openai.com/oauth/authorize";
@@ -80,7 +81,9 @@ pub async fn login() -> Result<()> {
             }
         })?;
 
-    let callback = tokio::spawn(crate::oauth::callback::start_callback_server(listener));
+    let callback = tokio::spawn(crate::agent::auth::callback::start_callback_server(
+        listener,
+    ));
 
     let auth_url_string = auth_url.to_string();
     tracing::info!(
@@ -133,7 +136,7 @@ pub async fn login() -> Result<()> {
     }
 
     let token_payload: TokenResponse = token_res.json().await?;
-    let token = TokenData {
+    let token = AgentToken {
         access_token: token_payload.access_token,
         refresh_token: token_payload.refresh_token,
         expires_at: Utc::now() + Duration::seconds(token_payload.expires_in.unwrap_or(3600)),
@@ -145,7 +148,7 @@ pub async fn login() -> Result<()> {
     Ok(())
 }
 
-pub async fn refresh_if_needed(token: &mut TokenData) -> Result<()> {
+pub async fn refresh_if_needed(token: &mut AgentToken) -> Result<()> {
     let now = Utc::now();
     let expiring_soon = token.expires_at - now <= Duration::minutes(5);
     let refresh_stale = token
@@ -198,12 +201,12 @@ pub async fn refresh_if_needed(token: &mut TokenData) -> Result<()> {
     Ok(())
 }
 
-pub async fn get_usage(token: &TokenData) -> Result<UsageInfo> {
+pub async fn get_usage(token: &AgentToken) -> Result<UsageInfo> {
     let value = get_usage_raw(token).await?;
     Ok(parse_usage(value))
 }
 
-pub async fn get_usage_raw(token: &TokenData) -> Result<Value> {
+pub async fn get_usage_raw(token: &AgentToken) -> Result<Value> {
     let client = reqwest::Client::new();
     let response = client
         .get(USAGE_URL)
@@ -231,7 +234,7 @@ pub async fn get_usage_raw(token: &TokenData) -> Result<Value> {
     Ok(value)
 }
 
-pub async fn load_saved_token() -> Result<Option<TokenData>> {
+pub async fn load_saved_token() -> Result<Option<AgentToken>> {
     let path = auth_file_path(TOKEN_FILE_NAME)?;
     load_token(&path)
 }
@@ -337,29 +340,44 @@ fn parse_usage(value: Value) -> UsageInfo {
     }
 }
 
-#[async_trait]
-impl OAuthAgent for CodexAgent {
+impl AgentIdentity for CodexAgent {
     fn descriptor(&self) -> &'static AgentDescriptor {
         &DESCRIPTOR
     }
+}
 
+impl Agent for CodexAgent {
+    fn auth_capability(&self) -> Option<&dyn AgentAuthCapability> {
+        Some(self)
+    }
+
+    fn usage_capability(&self) -> Option<&dyn AgentUsageCapability> {
+        Some(self)
+    }
+}
+
+#[async_trait]
+impl AgentAuthCapability for CodexAgent {
     async fn login(&self) -> Result<()> {
         login().await
     }
 
-    async fn load_saved_token(&self) -> Result<Option<TokenData>> {
+    async fn load_saved_token(&self) -> Result<Option<AgentToken>> {
         load_saved_token().await
     }
 
-    async fn refresh_if_needed(&self, token: &mut TokenData) -> Result<()> {
+    async fn refresh_if_needed(&self, token: &mut AgentToken) -> Result<()> {
         refresh_if_needed(token).await
     }
+}
 
-    async fn get_usage(&self, token: &TokenData) -> Result<UsageInfo> {
+#[async_trait]
+impl AgentUsageCapability for CodexAgent {
+    async fn get_usage(&self, token: &AgentToken) -> Result<UsageInfo> {
         get_usage(token).await
     }
 
-    async fn get_usage_raw(&self, token: &TokenData) -> Result<Value> {
+    async fn get_usage_raw(&self, token: &AgentToken) -> Result<Value> {
         get_usage_raw(token).await
     }
 

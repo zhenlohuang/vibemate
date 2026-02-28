@@ -10,10 +10,10 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 use tokio::sync::{broadcast, mpsc};
 
+use crate::agent::auth::token::{auth_file_path, save_token};
+use crate::agent::{global_agent_registry, UsageInfo};
 use crate::config::AppConfig;
 use crate::error::Result;
-use crate::oauth::token::{auth_file_path, save_token};
-use crate::oauth::{global_agent_registry, UsageInfo};
 use crate::proxy;
 use crate::tui::app::App;
 use crate::tui::ui;
@@ -119,14 +119,23 @@ async fn collect_usage(show_extra_quota: bool) -> UsageUpdate {
     let mut usage = Vec::new();
     let mut errors = Vec::new();
 
-    for oauth_agent in registry.iter() {
-        let agent_id = oauth_agent.descriptor().id;
-        match oauth_agent.load_saved_token().await {
+    for agent_impl in registry.iter() {
+        let agent_id = agent_impl.descriptor().id;
+        let Some(auth) = agent_impl.auth_capability() else {
+            errors.push(format!("{agent_id} capability missing: auth"));
+            continue;
+        };
+        let Some(usage_capability) = agent_impl.usage_capability() else {
+            errors.push(format!("{agent_id} capability missing: usage"));
+            continue;
+        };
+
+        match auth.load_saved_token().await {
             Ok(Some(mut token)) => {
-                if let Err(err) = oauth_agent.refresh_if_needed(&mut token).await {
+                if let Err(err) = auth.refresh_if_needed(&mut token).await {
                     errors.push(format!("{agent_id} refresh error: {err}"));
                 } else {
-                    let path = match auth_file_path(oauth_agent.descriptor().token_file_name) {
+                    let path = match auth_file_path(agent_impl.descriptor().token_file_name) {
                         Ok(path) => path,
                         Err(err) => {
                             errors.push(format!("token directory error: {err}"));
@@ -139,7 +148,7 @@ async fn collect_usage(show_extra_quota: bool) -> UsageUpdate {
                     if let Err(err) = save_token(&path, &token) {
                         errors.push(format!("{agent_id} token save error: {err}"));
                     }
-                    match oauth_agent.get_usage(&token).await {
+                    match usage_capability.get_usage(&token).await {
                         Ok(info) => usage.push(info),
                         Err(err) => errors.push(format!("{agent_id} usage error: {err}")),
                     }

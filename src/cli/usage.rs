@@ -3,10 +3,10 @@ use std::collections::BTreeMap;
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::agent::auth::token::{auth_file_path, save_token};
+use crate::agent::{global_agent_registry, AgentUsageCapability, UsageInfo, UsageWindow};
 use crate::config::AppConfig;
 use crate::error::{AppError, Result};
-use crate::oauth::token::{auth_file_path, save_token};
-use crate::oauth::{global_agent_registry, OAuthAgent, UsageInfo};
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct UsageOptions {
@@ -51,15 +51,24 @@ pub async fn run(config: &AppConfig, options: UsageOptions) -> Result<()> {
     let mut errors = Vec::new();
     let mut found_any_token = false;
 
-    for oauth_agent in registry.iter() {
-        let agent_id = oauth_agent.descriptor().id;
-        match oauth_agent.load_saved_token().await {
+    for agent_impl in registry.iter() {
+        let agent_id = agent_impl.descriptor().id;
+        let Some(auth) = agent_impl.auth_capability() else {
+            errors.push(format!("{agent_id} capability missing: auth"));
+            continue;
+        };
+        let Some(usage_capability) = agent_impl.usage_capability() else {
+            errors.push(format!("{agent_id} capability missing: usage"));
+            continue;
+        };
+
+        match auth.load_saved_token().await {
             Ok(Some(mut token)) => {
                 found_any_token = true;
-                if let Err(err) = oauth_agent.refresh_if_needed(&mut token).await {
+                if let Err(err) = auth.refresh_if_needed(&mut token).await {
                     errors.push(format!("{agent_id} refresh error: {err}"));
                 } else {
-                    match auth_file_path(oauth_agent.descriptor().token_file_name) {
+                    match auth_file_path(agent_impl.descriptor().token_file_name) {
                         Ok(path) => {
                             if let Err(err) = save_token(&path, &token) {
                                 errors.push(format!("{agent_id} token save error: {err}"));
@@ -69,14 +78,14 @@ pub async fn run(config: &AppConfig, options: UsageOptions) -> Result<()> {
                     }
 
                     if options.raw {
-                        match oauth_agent.get_usage_raw(&token).await {
+                        match usage_capability.get_usage_raw(&token).await {
                             Ok(value) => {
                                 raw_results.insert(agent_id.to_string(), value);
                             }
                             Err(err) => errors.push(format!("{agent_id} usage error: {err}")),
                         }
                     } else {
-                        match oauth_agent.get_usage(&token).await {
+                        match usage_capability.get_usage(&token).await {
                             Ok(info) => usage_results.push(info),
                             Err(err) => errors.push(format!("{agent_id} usage error: {err}")),
                         }
@@ -217,27 +226,29 @@ fn to_usage_json_agent(info: &UsageInfo) -> UsageJsonAgent {
     }
 }
 
-fn derive_quota_name(agent_name: &str, window: &crate::oauth::UsageWindow) -> String {
-    if let Some(agent) = lookup_agent(agent_name) {
+fn derive_quota_name(agent_name: &str, window: &UsageWindow) -> String {
+    if let Some(agent) = lookup_usage_capability(agent_name) {
         return agent.quota_name(window);
     }
 
     window.name.to_string()
 }
 
-pub fn derive_display_name(agent_name: &str, window: &crate::oauth::UsageWindow) -> String {
-    if let Some(agent) = lookup_agent(agent_name) {
+pub fn derive_display_name(agent_name: &str, window: &UsageWindow) -> String {
+    if let Some(agent) = lookup_usage_capability(agent_name) {
         return agent.display_quota_name(window);
     }
 
     normalize_quota_display_name(&window.name)
 }
 
-fn lookup_agent(agent_name: &str) -> Option<&'static dyn OAuthAgent> {
-    global_agent_registry().get(agent_name)
+fn lookup_usage_capability(agent_name: &str) -> Option<&'static dyn AgentUsageCapability> {
+    global_agent_registry()
+        .get(agent_name)
+        .and_then(|agent| agent.usage_capability())
 }
 
-fn should_display_quota(window: &crate::oauth::UsageWindow) -> bool {
+fn should_display_quota(window: &UsageWindow) -> bool {
     if !window.utilization_pct.is_finite() {
         return false;
     }
@@ -247,11 +258,11 @@ fn should_display_quota(window: &crate::oauth::UsageWindow) -> bool {
     }
 }
 
-fn should_display_extra_quota(window: &crate::oauth::UsageWindow) -> bool {
+fn should_display_extra_quota(window: &UsageWindow) -> bool {
     window.utilization_pct.is_finite()
 }
 
-pub fn should_display_window(window: &crate::oauth::UsageWindow) -> bool {
+pub fn should_display_window(window: &UsageWindow) -> bool {
     if window.is_extra {
         return should_display_extra_quota(window);
     }
@@ -259,12 +270,12 @@ pub fn should_display_window(window: &crate::oauth::UsageWindow) -> bool {
 }
 
 fn normalize_quota_display_name(quota_name: &str) -> String {
-    crate::oauth::normalize_quota_display_name(quota_name)
+    crate::agent::normalize_quota_display_name(quota_name)
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::oauth::{UsageInfo, UsageWindow};
+    use crate::agent::{UsageInfo, UsageWindow};
 
     use super::{
         derive_display_name, derive_quota_name, normalize_quota_display_name, to_usage_json_agent,

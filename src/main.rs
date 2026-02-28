@@ -1,7 +1,7 @@
+mod agent;
 mod cli;
 mod config;
 mod error;
-mod oauth;
 mod provider;
 mod proxy;
 mod tui;

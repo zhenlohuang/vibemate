@@ -7,10 +7,13 @@ use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::agent::auth::pkce::{generate_challenge, generate_state, generate_verifier};
+use crate::agent::auth::token::{auth_file_path, load_token, save_token, AgentToken};
+use crate::agent::{
+    Agent, AgentAuthCapability, AgentDescriptor, AgentIdentity, AgentUsageCapability, UsageInfo,
+    UsageWindow,
+};
 use crate::error::{AppError, Result};
-use crate::oauth::pkce::{generate_challenge, generate_state, generate_verifier};
-use crate::oauth::token::{auth_file_path, load_token, save_token, TokenData};
-use crate::oauth::{AgentDescriptor, OAuthAgent, UsageInfo, UsageWindow};
 
 pub const CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 pub const AUTH_URL: &str = "https://claude.ai/oauth/authorize";
@@ -139,7 +142,7 @@ pub async fn login() -> Result<()> {
     }
 
     let payload: TokenResponse = response.json().await?;
-    let token = TokenData {
+    let token = AgentToken {
         access_token: payload.access_token,
         refresh_token: payload.refresh_token,
         expires_at: Utc::now() + Duration::seconds(payload.expires_in.unwrap_or(3600)),
@@ -151,7 +154,7 @@ pub async fn login() -> Result<()> {
     Ok(())
 }
 
-pub async fn refresh_if_needed(token: &mut TokenData) -> Result<()> {
+pub async fn refresh_if_needed(token: &mut AgentToken) -> Result<()> {
     let now = Utc::now();
     if token.expires_at - now > Duration::minutes(5) {
         return Ok(());
@@ -199,7 +202,7 @@ pub async fn refresh_if_needed(token: &mut TokenData) -> Result<()> {
     Ok(())
 }
 
-pub async fn get_usage(token: &TokenData) -> Result<UsageInfo> {
+pub async fn get_usage(token: &AgentToken) -> Result<UsageInfo> {
     let value = get_usage_raw(token).await?;
     parse_usage(value)
 }
@@ -490,7 +493,7 @@ fn normalize_name(input: &str) -> String {
     input.trim().to_ascii_lowercase().replace([' ', '_'], "-")
 }
 
-pub async fn get_usage_raw(token: &TokenData) -> Result<Value> {
+pub async fn get_usage_raw(token: &AgentToken) -> Result<Value> {
     let client = reqwest::Client::new();
     let response = client
         .get(USAGE_URL)
@@ -516,34 +519,49 @@ pub async fn get_usage_raw(token: &TokenData) -> Result<Value> {
     Ok(value)
 }
 
-pub async fn load_saved_token() -> Result<Option<TokenData>> {
+pub async fn load_saved_token() -> Result<Option<AgentToken>> {
     let path = auth_file_path(TOKEN_FILE_NAME)?;
     load_token(&path)
 }
 
-#[async_trait]
-impl OAuthAgent for ClaudeAgent {
+impl AgentIdentity for ClaudeAgent {
     fn descriptor(&self) -> &'static AgentDescriptor {
         &DESCRIPTOR
     }
+}
 
+impl Agent for ClaudeAgent {
+    fn auth_capability(&self) -> Option<&dyn AgentAuthCapability> {
+        Some(self)
+    }
+
+    fn usage_capability(&self) -> Option<&dyn AgentUsageCapability> {
+        Some(self)
+    }
+}
+
+#[async_trait]
+impl AgentAuthCapability for ClaudeAgent {
     async fn login(&self) -> Result<()> {
         login().await
     }
 
-    async fn load_saved_token(&self) -> Result<Option<TokenData>> {
+    async fn load_saved_token(&self) -> Result<Option<AgentToken>> {
         load_saved_token().await
     }
 
-    async fn refresh_if_needed(&self, token: &mut TokenData) -> Result<()> {
+    async fn refresh_if_needed(&self, token: &mut AgentToken) -> Result<()> {
         refresh_if_needed(token).await
     }
+}
 
-    async fn get_usage(&self, token: &TokenData) -> Result<UsageInfo> {
+#[async_trait]
+impl AgentUsageCapability for ClaudeAgent {
+    async fn get_usage(&self, token: &AgentToken) -> Result<UsageInfo> {
         get_usage(token).await
     }
 
-    async fn get_usage_raw(&self, token: &TokenData) -> Result<Value> {
+    async fn get_usage_raw(&self, token: &AgentToken) -> Result<Value> {
         get_usage_raw(token).await
     }
 }
