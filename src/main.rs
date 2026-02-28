@@ -14,9 +14,19 @@ use tracing_subscriber::EnvFilter;
 use crate::error::Result;
 
 #[derive(Parser, Debug)]
-#[command(name = "vibemate", version, about = "Your Vibe Coding mate")]
+#[command(
+    name = "vibemate",
+    version,
+    about = "Your vibe coding companion",
+    long_about = "A CLI for logging into supported agents, checking quota usage, running a local proxy, and viewing a terminal dashboard."
+)]
 struct Cli {
-    #[arg(long, default_value = "~/.vibemate/config.toml")]
+    #[arg(
+        long,
+        value_name = "PATH",
+        default_value = "~/.vibemate/config.toml",
+        help = "Path to the config file"
+    )]
     config: PathBuf,
 
     #[command(subcommand)]
@@ -25,19 +35,51 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    #[command(
+        about = "Authenticate with an agent provider",
+        long_about = "Start an OAuth login flow for the selected agent and save the token locally."
+    )]
     Login {
+        #[arg(
+            value_name = "AGENT",
+            help = "Agent ID to log in (for example: codex, claude)"
+        )]
         agent: String,
     },
+    #[command(
+        about = "Show usage and quota information",
+        long_about = "Fetch usage data for logged-in agents. Use --json for normalized JSON output, or --raw for upstream provider payloads."
+    )]
     Usage {
-        #[arg(long, conflicts_with = "raw")]
+        #[arg(
+            long,
+            conflicts_with = "raw",
+            help = "Print normalized usage data as pretty JSON"
+        )]
         json: bool,
-        #[arg(long, conflicts_with = "json")]
+        #[arg(
+            long,
+            conflicts_with = "json",
+            help = "Print raw provider usage payloads as pretty JSON"
+        )]
         raw: bool,
     },
+    #[command(
+        about = "Run the local proxy server",
+        long_about = "Start the Vibemate proxy server using the configured host and port."
+    )]
     Proxy,
+    #[command(
+        about = "Launch the interactive terminal dashboard",
+        long_about = "Start the proxy and open the TUI dashboard with logs and usage panels."
+    )]
     Dashboard,
+    #[command(
+        about = "Inspect or initialize the config file",
+        long_about = "Print the current config file content, or create one with defaults using --init."
+    )]
     Config {
-        #[arg(long)]
+        #[arg(long, help = "Create a default config file at --config path")]
         init: bool,
     },
 }
