@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use chrono::{Duration, Utc};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
@@ -9,7 +10,9 @@ use url::Url;
 use crate::error::{AppError, Result};
 use crate::oauth::pkce::{generate_challenge, generate_state, generate_verifier};
 use crate::oauth::token::{auth_file_path, load_token, save_token, TokenData};
-use crate::oauth::{UsageInfo, UsageWindow};
+use crate::oauth::{
+    normalize_quota_display_name, AgentDescriptor, OAuthAgent, UsageInfo, UsageWindow,
+};
 
 pub const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 pub const AUTH_URL: &str = "https://auth.openai.com/oauth/authorize";
@@ -18,6 +21,13 @@ pub const CALLBACK_PORT: u16 = 1455;
 pub const REDIRECT_URI: &str = "http://localhost:1455/auth/callback";
 pub const USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
 const TOKEN_FILE_NAME: &str = "codex_auth.json";
+pub const DESCRIPTOR: AgentDescriptor = AgentDescriptor {
+    id: "codex",
+    display_name: "Codex",
+    token_file_name: TOKEN_FILE_NAME,
+};
+
+pub struct CodexAgent;
 
 #[derive(Debug, Deserialize)]
 struct TokenResponse {
@@ -137,12 +147,12 @@ pub async fn login() -> Result<()> {
 
 pub async fn refresh_if_needed(token: &mut TokenData) -> Result<()> {
     let now = Utc::now();
-
-    if let Some(last_refresh) = token.last_refresh {
-        if now.signed_duration_since(last_refresh) < Duration::days(8) {
-            return Ok(());
-        }
-    } else if now < token.expires_at {
+    let expiring_soon = token.expires_at - now <= Duration::minutes(5);
+    let refresh_stale = token
+        .last_refresh
+        .map(|last_refresh| now.signed_duration_since(last_refresh) >= Duration::days(8))
+        .unwrap_or(false);
+    if !expiring_soon && !refresh_stale {
         return Ok(());
     }
 
@@ -150,7 +160,7 @@ pub async fn refresh_if_needed(token: &mut TokenData) -> Result<()> {
         .refresh_token
         .as_deref()
         .ok_or_else(|| AppError::TokenExpired {
-            agent: "codex".to_string(),
+            agent: DESCRIPTOR.id.to_string(),
         })?;
 
     let client = reqwest::Client::new();
@@ -166,7 +176,7 @@ pub async fn refresh_if_needed(token: &mut TokenData) -> Result<()> {
 
     if response.status() == StatusCode::UNAUTHORIZED {
         return Err(AppError::TokenExpired {
-            agent: "codex".to_string(),
+            agent: DESCRIPTOR.id.to_string(),
         });
     }
 
@@ -203,7 +213,7 @@ pub async fn get_usage_raw(token: &TokenData) -> Result<Value> {
 
     if response.status() == StatusCode::UNAUTHORIZED {
         return Err(AppError::TokenExpired {
-            agent: "codex".to_string(),
+            agent: DESCRIPTOR.id.to_string(),
         });
     }
 
@@ -318,33 +328,69 @@ fn parse_usage(value: Value) -> UsageInfo {
         }
     }
 
-    if let Some(root) = value.as_object() {
-        for (key, field) in root {
-            if key == "additional_rate_limits" {
-                continue;
-            }
-            if let Some(items) = field.as_array() {
-                for item in items {
-                    let name = item
-                        .get("name")
-                        .or_else(|| item.get("window"))
-                        .or_else(|| item.get("type"))
-                        .and_then(Value::as_str)
-                        .unwrap_or(key);
-                    if let Some(window) = parse_window(name, item) {
-                        push_window(window);
-                    }
-                }
-            }
-        }
-    }
-
     UsageInfo {
-        agent_name: "codex".to_string(),
-        display_name: "Codex".to_string(),
+        agent_name: DESCRIPTOR.id.to_string(),
+        display_name: DESCRIPTOR.display_name.to_string(),
         plan,
         windows,
         extra_usage: None,
+    }
+}
+
+#[async_trait]
+impl OAuthAgent for CodexAgent {
+    fn descriptor(&self) -> &'static AgentDescriptor {
+        &DESCRIPTOR
+    }
+
+    async fn login(&self) -> Result<()> {
+        login().await
+    }
+
+    async fn load_saved_token(&self) -> Result<Option<TokenData>> {
+        load_saved_token().await
+    }
+
+    async fn refresh_if_needed(&self, token: &mut TokenData) -> Result<()> {
+        refresh_if_needed(token).await
+    }
+
+    async fn get_usage(&self, token: &TokenData) -> Result<UsageInfo> {
+        get_usage(token).await
+    }
+
+    async fn get_usage_raw(&self, token: &TokenData) -> Result<Value> {
+        get_usage_raw(token).await
+    }
+
+    fn quota_name(&self, window: &UsageWindow) -> String {
+        if window.is_extra {
+            return window
+                .source_limit_name
+                .clone()
+                .unwrap_or_else(|| "additional_rate_limits".to_string());
+        }
+        window.name.clone()
+    }
+
+    fn display_quota_name(&self, window: &UsageWindow) -> String {
+        if window.is_extra {
+            let limit_name = window
+                .source_limit_name
+                .clone()
+                .unwrap_or_else(|| "additional_rate_limits".to_string());
+            if window.name.ends_with("-five-hour") {
+                return format!("{limit_name}(5h)");
+            }
+            if window.name.ends_with("-seven-day") {
+                return format!("{limit_name}(7d)");
+            }
+            if window.name.ends_with("-seven-day-opus") {
+                return format!("{limit_name}(opus 7d)");
+            }
+            return limit_name;
+        }
+        normalize_quota_display_name(&window.name)
     }
 }
 
@@ -681,5 +727,23 @@ mod tests {
             .windows
             .iter()
             .any(|w| w.name == "gpt-5-3-codex-spark-five-hour" && w.is_extra));
+    }
+
+    #[test]
+    fn parse_usage_ignores_unrelated_root_arrays() {
+        let value = json!({
+            "plan_type": "plus",
+            "metadata": [
+                {
+                    "name": "not-a-quota",
+                    "used": 1,
+                    "limit": 2,
+                    "resets_at": "2026-02-27T20:00:00Z"
+                }
+            ]
+        });
+
+        let usage = parse_usage(value);
+        assert!(usage.windows.is_empty());
     }
 }

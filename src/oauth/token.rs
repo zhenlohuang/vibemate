@@ -34,10 +34,6 @@ pub fn load_token(path: &Path) -> Result<Option<TokenData>> {
     Ok(Some(token))
 }
 
-pub fn is_expired(token: &TokenData) -> bool {
-    token.expires_at <= Utc::now()
-}
-
 pub fn vibemate_dir() -> Result<PathBuf> {
     let home = dirs::home_dir()
         .ok_or_else(|| AppError::Config("Unable to find home directory".to_string()))?;

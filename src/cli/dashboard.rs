@@ -13,7 +13,7 @@ use tokio::sync::{broadcast, mpsc};
 use crate::config::AppConfig;
 use crate::error::Result;
 use crate::oauth::token::{auth_file_path, save_token};
-use crate::oauth::{claude, codex, UsageInfo};
+use crate::oauth::{global_agent_registry, UsageInfo};
 use crate::proxy;
 use crate::tui::app::App;
 use crate::tui::ui;
@@ -115,63 +115,39 @@ async fn run_dashboard_loop(
 }
 
 async fn collect_usage(show_extra_quota: bool) -> UsageUpdate {
+    let registry = global_agent_registry();
     let mut usage = Vec::new();
     let mut errors = Vec::new();
 
-    match codex::load_saved_token().await {
-        Ok(Some(mut token)) => {
-            if let Err(err) = codex::refresh_if_needed(&mut token).await {
-                errors.push(format!("codex refresh error: {err}"));
-            } else {
-                let path = match auth_file_path("codex_auth.json") {
-                    Ok(path) => path,
-                    Err(err) => {
-                        errors.push(format!("token directory error: {err}"));
-                        return UsageUpdate {
-                            usage,
-                            message: Some(errors.join(" | ")),
-                        };
+    for oauth_agent in registry.iter() {
+        let agent_id = oauth_agent.descriptor().id;
+        match oauth_agent.load_saved_token().await {
+            Ok(Some(mut token)) => {
+                if let Err(err) = oauth_agent.refresh_if_needed(&mut token).await {
+                    errors.push(format!("{agent_id} refresh error: {err}"));
+                } else {
+                    let path = match auth_file_path(oauth_agent.descriptor().token_file_name) {
+                        Ok(path) => path,
+                        Err(err) => {
+                            errors.push(format!("token directory error: {err}"));
+                            return UsageUpdate {
+                                usage,
+                                message: Some(errors.join(" | ")),
+                            };
+                        }
+                    };
+                    if let Err(err) = save_token(&path, &token) {
+                        errors.push(format!("{agent_id} token save error: {err}"));
                     }
-                };
-                if let Err(err) = save_token(&path, &token) {
-                    errors.push(format!("codex token save error: {err}"));
-                }
-                match codex::get_usage(&token).await {
-                    Ok(info) => usage.push(info),
-                    Err(err) => errors.push(format!("codex usage error: {err}")),
+                    match oauth_agent.get_usage(&token).await {
+                        Ok(info) => usage.push(info),
+                        Err(err) => errors.push(format!("{agent_id} usage error: {err}")),
+                    }
                 }
             }
+            Ok(None) => {}
+            Err(err) => errors.push(format!("{agent_id} token load error: {err}")),
         }
-        Ok(None) => {}
-        Err(err) => errors.push(format!("codex token load error: {err}")),
-    }
-
-    match claude::load_saved_token().await {
-        Ok(Some(mut token)) => {
-            if let Err(err) = claude::refresh_if_needed(&mut token).await {
-                errors.push(format!("claude-code refresh error: {err}"));
-            } else {
-                let path = match auth_file_path("claude_auth.json") {
-                    Ok(path) => path,
-                    Err(err) => {
-                        errors.push(format!("token directory error: {err}"));
-                        return UsageUpdate {
-                            usage,
-                            message: Some(errors.join(" | ")),
-                        };
-                    }
-                };
-                if let Err(err) = save_token(&path, &token) {
-                    errors.push(format!("claude-code token save error: {err}"));
-                }
-                match claude::get_usage(&token).await {
-                    Ok(info) => usage.push(info),
-                    Err(err) => errors.push(format!("claude-code usage error: {err}")),
-                }
-            }
-        }
-        Ok(None) => {}
-        Err(err) => errors.push(format!("claude-code token load error: {err}")),
     }
 
     let message = if errors.is_empty() {

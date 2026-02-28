@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::io;
 
+use async_trait::async_trait;
 use chrono::{Duration, Utc};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
@@ -9,7 +10,7 @@ use serde_json::Value;
 use crate::error::{AppError, Result};
 use crate::oauth::pkce::{generate_challenge, generate_state, generate_verifier};
 use crate::oauth::token::{auth_file_path, load_token, save_token, TokenData};
-use crate::oauth::{UsageInfo, UsageWindow};
+use crate::oauth::{AgentDescriptor, OAuthAgent, UsageInfo, UsageWindow};
 
 pub const CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 pub const AUTH_URL: &str = "https://claude.ai/oauth/authorize";
@@ -19,6 +20,13 @@ pub const SCOPE: &str = "org:create_api_key user:profile user:inference";
 pub const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 pub const ANTHROPIC_BETA: &str = "oauth-2025-04-20";
 const TOKEN_FILE_NAME: &str = "claude_auth.json";
+pub const DESCRIPTOR: AgentDescriptor = AgentDescriptor {
+    id: "claude-code",
+    display_name: "Claude Code",
+    token_file_name: TOKEN_FILE_NAME,
+};
+
+pub struct ClaudeAgent;
 
 #[derive(Debug, Deserialize)]
 struct TokenResponse {
@@ -153,7 +161,7 @@ pub async fn refresh_if_needed(token: &mut TokenData) -> Result<()> {
         .refresh_token
         .as_deref()
         .ok_or_else(|| AppError::TokenExpired {
-            agent: "claude-code".to_string(),
+            agent: DESCRIPTOR.id.to_string(),
         })?;
 
     let client = reqwest::Client::new();
@@ -169,7 +177,7 @@ pub async fn refresh_if_needed(token: &mut TokenData) -> Result<()> {
 
     if response.status() == StatusCode::UNAUTHORIZED {
         return Err(AppError::TokenExpired {
-            agent: "claude-code".to_string(),
+            agent: DESCRIPTOR.id.to_string(),
         });
     }
 
@@ -215,8 +223,8 @@ fn parse_usage(value: Value) -> Result<UsageInfo> {
     }
 
     Ok(UsageInfo {
-        agent_name: "claude-code".to_string(),
-        display_name: "Claude Code".to_string(),
+        agent_name: DESCRIPTOR.id.to_string(),
+        display_name: DESCRIPTOR.display_name.to_string(),
         plan: None,
         windows,
         extra_usage,
@@ -493,7 +501,7 @@ pub async fn get_usage_raw(token: &TokenData) -> Result<Value> {
 
     if response.status() == StatusCode::UNAUTHORIZED {
         return Err(AppError::TokenExpired {
-            agent: "claude-code".to_string(),
+            agent: DESCRIPTOR.id.to_string(),
         });
     }
 
@@ -511,6 +519,33 @@ pub async fn get_usage_raw(token: &TokenData) -> Result<Value> {
 pub async fn load_saved_token() -> Result<Option<TokenData>> {
     let path = auth_file_path(TOKEN_FILE_NAME)?;
     load_token(&path)
+}
+
+#[async_trait]
+impl OAuthAgent for ClaudeAgent {
+    fn descriptor(&self) -> &'static AgentDescriptor {
+        &DESCRIPTOR
+    }
+
+    async fn login(&self) -> Result<()> {
+        login().await
+    }
+
+    async fn load_saved_token(&self) -> Result<Option<TokenData>> {
+        load_saved_token().await
+    }
+
+    async fn refresh_if_needed(&self, token: &mut TokenData) -> Result<()> {
+        refresh_if_needed(token).await
+    }
+
+    async fn get_usage(&self, token: &TokenData) -> Result<UsageInfo> {
+        get_usage(token).await
+    }
+
+    async fn get_usage_raw(&self, token: &TokenData) -> Result<Value> {
+        get_usage_raw(token).await
+    }
 }
 
 #[cfg(test)]

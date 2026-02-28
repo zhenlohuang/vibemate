@@ -6,7 +6,7 @@ use serde_json::Value;
 use crate::config::AppConfig;
 use crate::error::{AppError, Result};
 use crate::oauth::token::{auth_file_path, save_token};
-use crate::oauth::{claude, codex, UsageInfo};
+use crate::oauth::{global_agent_registry, OAuthAgent, UsageInfo};
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct UsageOptions {
@@ -45,77 +45,47 @@ struct UsageRawOutput {
 }
 
 pub async fn run(config: &AppConfig, options: UsageOptions) -> Result<()> {
+    let registry = global_agent_registry();
     let mut usage_results = Vec::new();
     let mut raw_results = BTreeMap::new();
     let mut errors = Vec::new();
     let mut found_any_token = false;
 
-    match codex::load_saved_token().await {
-        Ok(Some(mut token)) => {
-            found_any_token = true;
-            if let Err(err) = codex::refresh_if_needed(&mut token).await {
-                errors.push(format!("codex refresh error: {err}"));
-            } else {
-                match auth_file_path("codex_auth.json") {
-                    Ok(path) => {
-                        if let Err(err) = save_token(&path, &token) {
-                            errors.push(format!("codex token save error: {err}"));
-                        }
-                    }
-                    Err(err) => errors.push(format!("codex token path error: {err}")),
-                }
-
-                if options.raw {
-                    match codex::get_usage_raw(&token).await {
-                        Ok(value) => {
-                            raw_results.insert("codex".to_string(), value);
-                        }
-                        Err(err) => errors.push(format!("codex usage error: {err}")),
-                    }
+    for oauth_agent in registry.iter() {
+        let agent_id = oauth_agent.descriptor().id;
+        match oauth_agent.load_saved_token().await {
+            Ok(Some(mut token)) => {
+                found_any_token = true;
+                if let Err(err) = oauth_agent.refresh_if_needed(&mut token).await {
+                    errors.push(format!("{agent_id} refresh error: {err}"));
                 } else {
-                    match codex::get_usage(&token).await {
-                        Ok(info) => usage_results.push(info),
-                        Err(err) => errors.push(format!("codex usage error: {err}")),
+                    match auth_file_path(oauth_agent.descriptor().token_file_name) {
+                        Ok(path) => {
+                            if let Err(err) = save_token(&path, &token) {
+                                errors.push(format!("{agent_id} token save error: {err}"));
+                            }
+                        }
+                        Err(err) => errors.push(format!("{agent_id} token path error: {err}")),
+                    }
+
+                    if options.raw {
+                        match oauth_agent.get_usage_raw(&token).await {
+                            Ok(value) => {
+                                raw_results.insert(agent_id.to_string(), value);
+                            }
+                            Err(err) => errors.push(format!("{agent_id} usage error: {err}")),
+                        }
+                    } else {
+                        match oauth_agent.get_usage(&token).await {
+                            Ok(info) => usage_results.push(info),
+                            Err(err) => errors.push(format!("{agent_id} usage error: {err}")),
+                        }
                     }
                 }
             }
+            Ok(None) => {}
+            Err(err) => errors.push(format!("{agent_id} token load error: {err}")),
         }
-        Ok(None) => {}
-        Err(err) => errors.push(format!("codex token load error: {err}")),
-    }
-
-    match claude::load_saved_token().await {
-        Ok(Some(mut token)) => {
-            found_any_token = true;
-            if let Err(err) = claude::refresh_if_needed(&mut token).await {
-                errors.push(format!("claude-code refresh error: {err}"));
-            } else {
-                match auth_file_path("claude_auth.json") {
-                    Ok(path) => {
-                        if let Err(err) = save_token(&path, &token) {
-                            errors.push(format!("claude-code token save error: {err}"));
-                        }
-                    }
-                    Err(err) => errors.push(format!("claude-code token path error: {err}")),
-                }
-
-                if options.raw {
-                    match claude::get_usage_raw(&token).await {
-                        Ok(value) => {
-                            raw_results.insert("claude-code".to_string(), value);
-                        }
-                        Err(err) => errors.push(format!("claude-code usage error: {err}")),
-                    }
-                } else {
-                    match claude::get_usage(&token).await {
-                        Ok(info) => usage_results.push(info),
-                        Err(err) => errors.push(format!("claude-code usage error: {err}")),
-                    }
-                }
-            }
-        }
-        Ok(None) => {}
-        Err(err) => errors.push(format!("claude-code token load error: {err}")),
     }
 
     let has_data = if options.raw {
@@ -158,9 +128,13 @@ pub async fn run(config: &AppConfig, options: UsageOptions) -> Result<()> {
         if options.json {
             return Ok(());
         }
-        println!(
-            "No login tokens found. Run `vibemate login codex` or `vibemate login claude-code`."
-        );
+        let supported_logins = registry
+            .supported_ids()
+            .into_iter()
+            .map(|name| format!("`vibemate login {name}`"))
+            .collect::<Vec<_>>()
+            .join(" or ");
+        println!("No login tokens found. Run {supported_logins}.");
         return Ok(());
     }
 
@@ -244,35 +218,23 @@ fn to_usage_json_agent(info: &UsageInfo) -> UsageJsonAgent {
 }
 
 fn derive_quota_name(agent_name: &str, window: &crate::oauth::UsageWindow) -> String {
-    if agent_name == "codex" && window.is_extra {
-        return window
-            .source_limit_name
-            .clone()
-            .unwrap_or_else(|| "additional_rate_limits".to_string());
+    if let Some(agent) = lookup_agent(agent_name) {
+        return agent.quota_name(window);
     }
 
     window.name.to_string()
 }
 
 pub fn derive_display_name(agent_name: &str, window: &crate::oauth::UsageWindow) -> String {
-    if agent_name == "codex" && window.is_extra {
-        let limit_name = window
-            .source_limit_name
-            .clone()
-            .unwrap_or_else(|| "additional_rate_limits".to_string());
-        if window.name.ends_with("-five-hour") {
-            return format!("{limit_name}(5h)");
-        }
-        if window.name.ends_with("-seven-day") {
-            return format!("{limit_name}(7d)");
-        }
-        if window.name.ends_with("-seven-day-opus") {
-            return format!("{limit_name}(opus 7d)");
-        }
-        return limit_name;
+    if let Some(agent) = lookup_agent(agent_name) {
+        return agent.display_quota_name(window);
     }
 
     normalize_quota_display_name(&window.name)
+}
+
+fn lookup_agent(agent_name: &str) -> Option<&'static dyn OAuthAgent> {
+    global_agent_registry().get(agent_name)
 }
 
 fn should_display_quota(window: &crate::oauth::UsageWindow) -> bool {
@@ -297,30 +259,7 @@ pub fn should_display_window(window: &crate::oauth::UsageWindow) -> bool {
 }
 
 fn normalize_quota_display_name(quota_name: &str) -> String {
-    if quota_name == "code-review-seven-day" || quota_name == "code-review" {
-        return "Code Review".to_string();
-    }
-    if quota_name == "five-hour" {
-        return "5h limit".to_string();
-    }
-    if quota_name == "seven-day" {
-        return "7d limit".to_string();
-    }
-    if quota_name == "seven-day-opus" {
-        return "opus (7d)".to_string();
-    }
-
-    if let Some(prefix) = quota_name.strip_suffix("-five-hour") {
-        return format!("{prefix} (5h)");
-    }
-    if let Some(prefix) = quota_name.strip_suffix("-seven-day-opus") {
-        return format!("{prefix} opus (7d)");
-    }
-    if let Some(prefix) = quota_name.strip_suffix("-seven-day") {
-        return format!("{prefix} (7d)");
-    }
-
-    quota_name.to_string()
+    crate::oauth::normalize_quota_display_name(quota_name)
 }
 
 #[cfg(test)]
