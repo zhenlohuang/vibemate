@@ -87,7 +87,7 @@ fn usage_window(name: &str, bucket: Option<UsageBucket>) -> Option<UsageWindow> 
     })
 }
 
-pub async fn login() -> Result<()> {
+pub async fn login(client: &reqwest::Client) -> Result<()> {
     let verifier = generate_verifier();
     let challenge = generate_challenge(&verifier);
     let state = generate_state();
@@ -120,7 +120,6 @@ pub async fn login() -> Result<()> {
         ));
     }
 
-    let client = reqwest::Client::new();
     let response = client
         .post(TOKEN_URL)
         .json(&AuthCodeExchange {
@@ -154,7 +153,7 @@ pub async fn login() -> Result<()> {
     Ok(())
 }
 
-pub async fn refresh_if_needed(token: &mut AgentToken) -> Result<()> {
+pub async fn refresh_if_needed(token: &mut AgentToken, client: &reqwest::Client) -> Result<()> {
     let now = Utc::now();
     if token.expires_at - now > Duration::minutes(5) {
         return Ok(());
@@ -167,7 +166,6 @@ pub async fn refresh_if_needed(token: &mut AgentToken) -> Result<()> {
             agent: DESCRIPTOR.id.to_string(),
         })?;
 
-    let client = reqwest::Client::new();
     let response = client
         .post(TOKEN_URL)
         .json(&RefreshExchange {
@@ -202,8 +200,8 @@ pub async fn refresh_if_needed(token: &mut AgentToken) -> Result<()> {
     Ok(())
 }
 
-pub async fn get_usage(token: &AgentToken) -> Result<UsageInfo> {
-    let value = get_usage_raw(token).await?;
+pub async fn get_usage(token: &AgentToken, client: &reqwest::Client) -> Result<UsageInfo> {
+    let value = get_usage_raw(token, client).await?;
     parse_usage(value)
 }
 
@@ -493,8 +491,7 @@ fn normalize_name(input: &str) -> String {
     input.trim().to_ascii_lowercase().replace([' ', '_'], "-")
 }
 
-pub async fn get_usage_raw(token: &AgentToken) -> Result<Value> {
-    let client = reqwest::Client::new();
+pub async fn get_usage_raw(token: &AgentToken, client: &reqwest::Client) -> Result<Value> {
     let response = client
         .get(USAGE_URL)
         .bearer_auth(&token.access_token)
@@ -542,27 +539,31 @@ impl Agent for ClaudeAgent {
 
 #[async_trait]
 impl AgentAuthCapability for ClaudeAgent {
-    async fn login(&self) -> Result<()> {
-        login().await
+    async fn login(&self, client: &reqwest::Client) -> Result<()> {
+        login(client).await
     }
 
     async fn load_saved_token(&self) -> Result<Option<AgentToken>> {
         load_saved_token().await
     }
 
-    async fn refresh_if_needed(&self, token: &mut AgentToken) -> Result<()> {
-        refresh_if_needed(token).await
+    async fn refresh_if_needed(
+        &self,
+        token: &mut AgentToken,
+        client: &reqwest::Client,
+    ) -> Result<()> {
+        refresh_if_needed(token, client).await
     }
 }
 
 #[async_trait]
 impl AgentUsageCapability for ClaudeAgent {
-    async fn get_usage(&self, token: &AgentToken) -> Result<UsageInfo> {
-        get_usage(token).await
+    async fn get_usage(&self, token: &AgentToken, client: &reqwest::Client) -> Result<UsageInfo> {
+        get_usage(token, client).await
     }
 
-    async fn get_usage_raw(&self, token: &AgentToken) -> Result<Value> {
-        get_usage_raw(token).await
+    async fn get_usage_raw(&self, token: &AgentToken, client: &reqwest::Client) -> Result<Value> {
+        get_usage_raw(token, client).await
     }
 }
 

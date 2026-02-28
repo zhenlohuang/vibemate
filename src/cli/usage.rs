@@ -50,6 +50,7 @@ pub async fn run(config: &AppConfig, options: UsageOptions) -> Result<()> {
     let mut raw_results = BTreeMap::new();
     let mut errors = Vec::new();
     let mut found_any_token = false;
+    let client = config.server.build_http_client()?;
 
     for agent_impl in registry.iter() {
         let agent_id = agent_impl.descriptor().id;
@@ -65,7 +66,7 @@ pub async fn run(config: &AppConfig, options: UsageOptions) -> Result<()> {
         match auth.load_saved_token().await {
             Ok(Some(mut token)) => {
                 found_any_token = true;
-                if let Err(err) = auth.refresh_if_needed(&mut token).await {
+                if let Err(err) = auth.refresh_if_needed(&mut token, &client).await {
                     errors.push(format!("{agent_id} refresh error: {err}"));
                 } else {
                     match auth_file_path(agent_impl.descriptor().token_file_name) {
@@ -78,14 +79,14 @@ pub async fn run(config: &AppConfig, options: UsageOptions) -> Result<()> {
                     }
 
                     if options.raw {
-                        match usage_capability.get_usage_raw(&token).await {
+                        match usage_capability.get_usage_raw(&token, &client).await {
                             Ok(value) => {
                                 raw_results.insert(agent_id.to_string(), value);
                             }
                             Err(err) => errors.push(format!("{agent_id} usage error: {err}")),
                         }
                     } else {
-                        match usage_capability.get_usage(&token).await {
+                        match usage_capability.get_usage(&token, &client).await {
                             Ok(info) => usage_results.push(info),
                             Err(err) => errors.push(format!("{agent_id} usage error: {err}")),
                         }
@@ -170,7 +171,7 @@ fn print_usage_table(items: &[UsageInfo], show_extra_quota: bool) {
         } else {
             item.display_name.as_str()
         };
-        println!("\nAgent: {} (plan: {})", display_name, plan);
+        println!("\n{} (plan: {})", display_name, plan);
         let windows: Vec<_> = item
             .windows
             .iter()

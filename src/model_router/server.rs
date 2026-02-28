@@ -14,17 +14,7 @@ use crate::model_router::router::ModelRouter;
 use crate::provider::ProviderRegistry;
 
 pub async fn start(config: &AppConfig, log_tx: broadcast::Sender<RequestLog>) -> Result<()> {
-    let mut client_builder = reqwest::Client::builder();
-
-    if let Some(proxy) = &config.system.proxy {
-        let proxy_config = reqwest::Proxy::all(proxy)
-            .map_err(|e| AppError::Config(format!("Invalid network proxy URL '{proxy}': {e}")))?;
-        client_builder = client_builder.proxy(proxy_config);
-    }
-
-    let http_client = client_builder
-        .build()
-        .map_err(|e| AppError::RouterServer(format!("Failed to build HTTP client: {e}")))?;
+    let http_client = config.system.build_http_client()?;
 
     let state = Arc::new(RouterState {
         provider_registry: ProviderRegistry::from_config(config),

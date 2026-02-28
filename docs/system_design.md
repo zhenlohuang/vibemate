@@ -176,6 +176,7 @@ Loads and validates the TOML configuration file. See [Section 5](#5-configuratio
 pub struct AppConfig {
     pub system: SystemConfig,
     pub router: RouterConfig,
+    pub agents: AgentsConfig,
     pub providers: HashMap<String, ProviderConfig>,
 }
 
@@ -195,6 +196,7 @@ pub struct RouterConfig {
 #[derive(Debug, Deserialize)]
 pub struct ProviderConfig {
     pub base_url: String,
+    pub api_key: Option<String>,
     pub headers: HashMap<String, String>,
 }
 

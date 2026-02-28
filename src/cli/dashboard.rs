@@ -51,11 +51,12 @@ async fn run_dashboard_loop(
         tokio::spawn(async move { model_router::server::start(&router_config, log_tx).await });
 
     let usage_task_tx = usage_tx.clone();
+    let usage_config = config.clone();
     let show_extra_quota = config.show_extra_quota();
     let usage_refresh_interval = config.usage_refresh_interval();
     let usage_task = tokio::spawn(async move {
         loop {
-            let update = collect_usage(show_extra_quota).await;
+            let update = collect_usage(&usage_config, show_extra_quota).await;
             if usage_task_tx.send(update).await.is_err() {
                 break;
             }
@@ -96,7 +97,7 @@ async fn run_dashboard_loop(
                     KeyCode::Char('q') => break,
                     KeyCode::Char('c') if ctrl => break,
                     KeyCode::Char('r') => {
-                        let update = collect_usage(config.show_extra_quota()).await;
+                        let update = collect_usage(config, config.show_extra_quota()).await;
                         app.usage = update.usage;
                         app.status_message = update.message;
                     }
@@ -115,10 +116,19 @@ async fn run_dashboard_loop(
     Ok(())
 }
 
-async fn collect_usage(show_extra_quota: bool) -> UsageUpdate {
+async fn collect_usage(config: &AppConfig, show_extra_quota: bool) -> UsageUpdate {
     let registry = global_agent_registry();
     let mut usage = Vec::new();
     let mut errors = Vec::new();
+    let client = match config.server.build_http_client() {
+        Ok(client) => client,
+        Err(err) => {
+            return UsageUpdate {
+                usage,
+                message: Some(format!("http client build error: {err}")),
+            };
+        }
+    };
 
     for agent_impl in registry.iter() {
         let agent_id = agent_impl.descriptor().id;
@@ -133,7 +143,7 @@ async fn collect_usage(show_extra_quota: bool) -> UsageUpdate {
 
         match auth.load_saved_token().await {
             Ok(Some(mut token)) => {
-                if let Err(err) = auth.refresh_if_needed(&mut token).await {
+                if let Err(err) = auth.refresh_if_needed(&mut token, &client).await {
                     errors.push(format!("{agent_id} refresh error: {err}"));
                 } else {
                     let path = match auth_file_path(agent_impl.descriptor().token_file_name) {
@@ -149,7 +159,7 @@ async fn collect_usage(show_extra_quota: bool) -> UsageUpdate {
                     if let Err(err) = save_token(&path, &token) {
                         errors.push(format!("{agent_id} token save error: {err}"));
                     }
-                    match usage_capability.get_usage(&token).await {
+                    match usage_capability.get_usage(&token, &client).await {
                         Ok(info) => usage.push(info),
                         Err(err) => errors.push(format!("{agent_id} usage error: {err}")),
                     }

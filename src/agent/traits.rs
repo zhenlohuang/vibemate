@@ -12,15 +12,19 @@ pub trait AgentIdentity: Send + Sync {
 
 #[async_trait]
 pub trait AgentAuthCapability: Send + Sync {
-    async fn login(&self) -> Result<()>;
+    async fn login(&self, client: &reqwest::Client) -> Result<()>;
     async fn load_saved_token(&self) -> Result<Option<AgentToken>>;
-    async fn refresh_if_needed(&self, token: &mut AgentToken) -> Result<()>;
+    async fn refresh_if_needed(
+        &self,
+        token: &mut AgentToken,
+        client: &reqwest::Client,
+    ) -> Result<()>;
 }
 
 #[async_trait]
 pub trait AgentUsageCapability: Send + Sync {
-    async fn get_usage(&self, token: &AgentToken) -> Result<UsageInfo>;
-    async fn get_usage_raw(&self, token: &AgentToken) -> Result<Value>;
+    async fn get_usage(&self, token: &AgentToken, client: &reqwest::Client) -> Result<UsageInfo>;
+    async fn get_usage_raw(&self, token: &AgentToken, client: &reqwest::Client) -> Result<Value>;
 
     fn quota_name(&self, window: &UsageWindow) -> String {
         window.name.clone()
