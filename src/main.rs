@@ -52,6 +52,11 @@ enum Commands {
     )]
     Usage {
         #[arg(
+            value_name = "AGENT",
+            help = "Optional agent ID (for example: codex, claude-code)"
+        )]
+        agent: Option<String>,
+        #[arg(
             long,
             conflicts_with = "raw",
             help = "Print normalized usage data as pretty JSON"
@@ -104,8 +109,8 @@ async fn main() -> Result<()> {
             let config = load_config(&config_path)?;
             match command {
                 Commands::Login { agent } => cli::login::run(&agent, &config).await,
-                Commands::Usage { json, raw } => {
-                    cli::usage::run(&config, cli::usage::UsageOptions { json, raw }).await
+                Commands::Usage { agent, json, raw } => {
+                    cli::usage::run(&config, cli::usage::UsageOptions { agent, json, raw }).await
                 }
                 Commands::Router => cli::router::run(&config).await,
                 Commands::Dashboard => cli::dashboard::run(&config).await,

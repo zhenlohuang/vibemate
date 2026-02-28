@@ -20,8 +20,9 @@ const DEFAULT_WIDGET_WIDTH: u16 = 50;
 const MIN_WIDGET_WIDTH: u16 = 30;
 const MAX_WIDGET_WIDTH: u16 = 80;
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct UsageOptions {
+    pub agent: Option<String>,
     pub json: bool,
     pub raw: bool,
 }
@@ -58,13 +59,17 @@ struct UsageRawOutput {
 
 pub async fn run(config: &AppConfig, options: UsageOptions) -> Result<()> {
     let registry = global_agent_registry();
+    let target_agent = validate_target_agent(options.agent.as_deref())?;
     let mut usage_results = Vec::new();
     let mut raw_results = BTreeMap::new();
     let mut errors = Vec::new();
     let mut found_any_token = false;
     let client = config.system.build_http_client()?;
 
-    for agent_impl in registry.iter() {
+    for agent_impl in registry
+        .iter()
+        .filter(|agent| target_agent.map_or(true, |id| agent.descriptor().id == id))
+    {
         let agent_id = agent_impl.descriptor().id;
         let Some(auth) = agent_impl.auth_capability() else {
             errors.push(format!("{agent_id} capability missing: auth"));
@@ -153,12 +158,16 @@ pub async fn run(config: &AppConfig, options: UsageOptions) -> Result<()> {
         if options.json {
             return Ok(());
         }
-        let supported_logins = registry
-            .supported_ids()
-            .into_iter()
+        let supported_logins = target_agent
             .map(|name| format!("`vibemate login {name}`"))
-            .collect::<Vec<_>>()
-            .join(" or ");
+            .unwrap_or_else(|| {
+                registry
+                    .supported_ids()
+                    .into_iter()
+                    .map(|name| format!("`vibemate login {name}`"))
+                    .collect::<Vec<_>>()
+                    .join(" or ")
+            });
         println!("No login tokens found. Run {supported_logins}.");
         return Ok(());
     }
@@ -173,6 +182,26 @@ pub async fn run(config: &AppConfig, options: UsageOptions) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn validate_target_agent(agent: Option<&str>) -> Result<Option<&str>> {
+    let Some(agent) = agent else {
+        return Ok(None);
+    };
+
+    if global_agent_registry().get(agent).is_some() {
+        return Ok(Some(agent));
+    }
+
+    let supported = global_agent_registry()
+        .supported_ids()
+        .into_iter()
+        .map(|name| format!("'{name}'"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(AppError::OAuth(format!(
+        "Unsupported agent '{agent}'. Use {supported}"
+    )))
 }
 
 fn print_usage_widget(items: &[UsageInfo]) -> Result<()> {
@@ -407,7 +436,7 @@ mod tests {
 
     use super::{
         derive_display_name, derive_quota_name, filter_extra_windows, normalize_quota_display_name,
-        to_usage_json_agent,
+        to_usage_json_agent, validate_target_agent,
     };
 
     #[test]
@@ -579,5 +608,20 @@ mod tests {
         assert_eq!(usage[0].windows.len(), 1);
         assert_eq!(usage[0].windows[0].name, "five-hour");
         assert!(!usage[0].windows[0].is_extra);
+    }
+
+    #[test]
+    fn validates_supported_usage_target_agent() {
+        assert_eq!(validate_target_agent(None).unwrap(), None);
+        assert_eq!(validate_target_agent(Some("codex")).unwrap(), Some("codex"));
+    }
+
+    #[test]
+    fn rejects_unknown_usage_target_agent() {
+        let err = validate_target_agent(Some("unknown-agent")).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "OAuth error: Unsupported agent 'unknown-agent'. Use 'codex', 'claude-code'"
+        );
     }
 }
