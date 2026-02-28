@@ -17,7 +17,7 @@ Vibemate is a Rust CLI tool that acts as a local AI model router and usage dashb
 |---|---|
 | `vibemate login codex` | Authenticate with OpenAI Codex via OAuth PKCE |
 | `vibemate login claude-code` | Authenticate with Anthropic Claude Code via OAuth PKCE |
-| `vibemate usage` | Display quota/usage for logged-in coding agents |
+| `vibemate usage` | Display quota/usage for logged-in coding agents as terminal widget cards |
 | `vibemate usage --json` | Display normalized usage as pretty JSON |
 | `vibemate usage --raw` | Display raw usage payloads from each agent as pretty JSON |
 | `vibemate router` | Start the model router server (foreground) |

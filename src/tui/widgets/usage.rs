@@ -1,5 +1,7 @@
 use ratatui::prelude::*;
+use ratatui::symbols;
 use ratatui::widgets::{Block, Borders, Gauge, Paragraph};
+use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
 
 use crate::agent::{UsageInfo, UsageWindow};
 use crate::cli::usage::{derive_display_name, should_display_window};
@@ -37,8 +39,60 @@ pub fn needed_height(usage_items: &[UsageInfo]) -> u16 {
 }
 
 pub fn render(frame: &mut Frame, area: Rect, usage_items: &[UsageInfo]) {
+    render_with_empty_message(
+        frame,
+        area,
+        usage_items,
+        "No usage data yet. Press r to refresh.",
+    );
+}
+
+pub fn render_static_lines(
+    usage_items: &[UsageInfo],
+    width: u16,
+    empty_message: &str,
+) -> Vec<String> {
+    let Some(buffer) = render_static_buffer(usage_items, width, empty_message) else {
+        return Vec::new();
+    };
+    buffer_to_lines(&buffer)
+}
+
+pub fn render_static_buffer(
+    usage_items: &[UsageInfo],
+    width: u16,
+    empty_message: &str,
+) -> Option<Buffer> {
+    let width = width.max(1);
+    let height = needed_height(usage_items).max(1);
+
+    let backend = TestBackend::new(width, height);
+    let mut terminal = match Terminal::new(backend) {
+        Ok(terminal) => terminal,
+        Err(_) => return None,
+    };
+
+    if terminal
+        .draw(|frame| {
+            let area = frame.area();
+            render_with_empty_message(frame, area, usage_items, empty_message);
+        })
+        .is_err()
+    {
+        return None;
+    }
+
+    Some(terminal.backend().buffer().clone())
+}
+
+fn render_with_empty_message(
+    frame: &mut Frame,
+    area: Rect,
+    usage_items: &[UsageInfo],
+    empty_message: &str,
+) {
     if usage_items.is_empty() {
-        let empty = Paragraph::new("No usage data yet. Press r to refresh.");
+        let empty = Paragraph::new(empty_message);
         frame.render_widget(empty, area);
         return;
     }
@@ -115,6 +169,53 @@ pub fn render(frame: &mut Frame, area: Rect, usage_items: &[UsageInfo]) {
     }
 }
 
+fn buffer_to_lines(buffer: &Buffer) -> Vec<String> {
+    let area = *buffer.area();
+    let mut lines = Vec::with_capacity(area.height as usize);
+
+    for y in 0..area.height {
+        let mut line = String::with_capacity(area.width as usize);
+        for x in 0..area.width {
+            line.push_str(buffer[(x, y)].symbol());
+        }
+        lines.push(line.trim_end().to_string());
+    }
+
+    while lines.last().is_some_and(|line| line.is_empty()) {
+        lines.pop();
+    }
+
+    lines
+}
+
+fn render_progress_bar(frame: &mut Frame, area: Rect, percent: u16) {
+    if area.is_empty() {
+        return;
+    }
+
+    let fill_bg = Color::Rgb(86, 90, 123);
+    let fill_fg = Color::Rgb(161, 167, 229);
+    let gauge = Gauge::default()
+        .style(Style::default().bg(fill_bg))
+        .gauge_style(Style::default().fg(fill_fg).bg(fill_bg))
+        .percent(percent)
+        .label("");
+    frame.render_widget(gauge, area);
+
+    // ratatui::Gauge leaves one center cell for label even when label is empty.
+    // Patch that single cell only when 100% to keep bar continuous while preserving Gauge style.
+    if percent == 100 {
+        let center_x = area.left() + area.width / 2;
+        let buffer = frame.buffer_mut();
+        for y in area.top()..area.bottom() {
+            buffer[(center_x, y)]
+                .set_symbol(symbols::block::FULL)
+                .set_fg(fill_fg)
+                .set_bg(fill_bg);
+        }
+    }
+}
+
 fn render_window(
     frame: &mut Frame,
     rows: &[Rect],
@@ -142,16 +243,7 @@ fn render_window(
         ])
         .split(rows[base + 1]);
 
-    let gauge = Gauge::default()
-        .style(Style::default().bg(Color::Rgb(86, 90, 123)))
-        .gauge_style(
-            Style::default()
-                .fg(Color::Rgb(161, 167, 229))
-                .bg(Color::Rgb(86, 90, 123)),
-        )
-        .percent(percent)
-        .label("");
-    frame.render_widget(gauge, bar_row[0]);
+    render_progress_bar(frame, bar_row[0], percent);
 
     let percent_label = Paragraph::new(Line::from(Span::styled(
         format!("{percent}% used"),
@@ -219,4 +311,59 @@ fn format_utc_offset(dt: DateTime<Local>) -> String {
     let hours = abs / 3600;
     let minutes = (abs % 3600) / 60;
     format!("UTC{sign}{hours:02}:{minutes:02}")
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::agent::{UsageInfo, UsageWindow};
+
+    use super::render_static_lines;
+
+    #[test]
+    fn static_render_includes_agent_title_and_percent() {
+        let usage = vec![UsageInfo {
+            agent_name: "codex".to_string(),
+            display_name: "Codex".to_string(),
+            plan: Some("plus".to_string()),
+            windows: vec![UsageWindow {
+                name: "five-hour".to_string(),
+                utilization_pct: 60.0,
+                resets_at: Some("2026-02-28T23:00:00Z".to_string()),
+                is_extra: false,
+                source_limit_name: None,
+            }],
+            extra_usage: None,
+        }];
+
+        let output = render_static_lines(&usage, 100, "No usage data available.").join("\n");
+        assert!(output.contains("Codex (plus)"));
+        assert!(output.contains("5h limit"));
+        assert!(output.contains("60% used"));
+    }
+
+    #[test]
+    fn static_render_uses_custom_empty_message() {
+        let output = render_static_lines(&[], 80, "No usage data available.").join("\n");
+        assert!(output.contains("No usage data available."));
+    }
+
+    #[test]
+    fn static_render_full_bar_has_no_center_gap() {
+        let usage = vec![UsageInfo {
+            agent_name: "claude-code".to_string(),
+            display_name: "Claude Code".to_string(),
+            plan: None,
+            windows: vec![UsageWindow {
+                name: "five-hour".to_string(),
+                utilization_pct: 100.0,
+                resets_at: Some("2026-02-28T18:00:00Z".to_string()),
+                is_extra: false,
+                source_limit_name: None,
+            }],
+            extra_usage: None,
+        }];
+
+        let output = render_static_lines(&usage, 100, "No usage data available.").join("\n");
+        assert!(!output.contains("█ █"));
+    }
 }

@@ -1,5 +1,12 @@
 use std::collections::BTreeMap;
+use std::io::{self, IsTerminal, Write};
 
+use crossterm::queue;
+use crossterm::style::{
+    Attribute, Color as CrosstermColor, Print, SetAttribute, SetBackgroundColor, SetForegroundColor,
+};
+use crossterm::terminal;
+use ratatui::style::{Color as TuiColor, Modifier};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -7,6 +14,11 @@ use crate::agent::auth::token::{auth_file_path, save_token};
 use crate::agent::{AgentUsageCapability, UsageInfo, UsageWindow, global_agent_registry};
 use crate::config::AppConfig;
 use crate::error::{AppError, Result};
+use crate::tui::widgets;
+
+const DEFAULT_WIDGET_WIDTH: u16 = 50;
+const MIN_WIDGET_WIDTH: u16 = 30;
+const MAX_WIDGET_WIDTH: u16 = 80;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct UsageOptions {
@@ -119,8 +131,11 @@ pub async fn run(config: &AppConfig, options: UsageOptions) -> Result<()> {
         };
         println!("{}", serde_json::to_string_pretty(&output)?);
     } else {
+        if !config.show_extra_quota() {
+            filter_extra_windows(&mut usage_results);
+        }
         if !usage_results.is_empty() {
-            print_usage_table(&usage_results, config.show_extra_quota());
+            print_usage_widget(&usage_results)?;
         }
         if !errors.is_empty() {
             eprintln!("\nUsage warnings");
@@ -160,40 +175,49 @@ pub async fn run(config: &AppConfig, options: UsageOptions) -> Result<()> {
     Ok(())
 }
 
-fn print_usage_table(items: &[UsageInfo], show_extra_quota: bool) {
-    println!("\nUsage Summary");
-    println!("=============");
+fn print_usage_widget(items: &[UsageInfo]) -> Result<()> {
+    let width = terminal::size()
+        .map(|(width, _)| width.clamp(MIN_WIDGET_WIDTH, MAX_WIDGET_WIDTH))
+        .unwrap_or(DEFAULT_WIDGET_WIDTH);
+    let mut stdout = io::stdout();
+    let styled_output = stdout.is_terminal();
 
-    for item in items {
-        let plan = item.plan.clone().unwrap_or_else(|| "unknown".to_string());
-        let display_name = if item.display_name.trim().is_empty() {
-            item.agent_name.as_str()
+    // For `vibemate usage`, render one card at a time so cards stack vertically.
+    for (index, item) in items.iter().enumerate() {
+        if index > 0 {
+            queue!(stdout, Print("\r\n"))?;
+        }
+        let single_item = std::slice::from_ref(item);
+        if styled_output {
+            if let Some(buffer) =
+                widgets::usage::render_static_buffer(single_item, width, "No usage data available.")
+            {
+                write_styled_buffer(&mut stdout, &buffer)?;
+            }
         } else {
-            item.display_name.as_str()
-        };
-        println!("\n{} (plan: {})", display_name, plan);
-        let windows: Vec<_> = item
-            .windows
-            .iter()
-            .filter(|window| {
-                should_display_window(window) && (show_extra_quota || !window.is_extra)
-            })
-            .collect();
-        if windows.is_empty() {
-            println!("  - no window data reported by provider");
-            continue;
+            for line in
+                widgets::usage::render_static_lines(single_item, width, "No usage data available.")
+            {
+                queue!(stdout, Print(line), Print("\r\n"))?;
+            }
         }
-        for window in windows {
-            let reset = window
-                .resets_at
-                .clone()
-                .unwrap_or_else(|| "n/a".to_string());
-            let display_name = derive_display_name(&item.agent_name, window);
-            println!(
-                "  - {:14} {:>6.2}%   resets_at={} ",
-                display_name, window.utilization_pct, reset
-            );
-        }
+    }
+
+    if styled_output {
+        queue!(
+            stdout,
+            SetAttribute(Attribute::Reset),
+            SetForegroundColor(CrosstermColor::Reset),
+            SetBackgroundColor(CrosstermColor::Reset)
+        )?;
+    }
+    stdout.flush()?;
+    Ok(())
+}
+
+fn filter_extra_windows(items: &mut [UsageInfo]) {
+    for item in items {
+        item.windows.retain(|window| !window.is_extra);
     }
 }
 
@@ -274,12 +298,116 @@ fn normalize_quota_display_name(quota_name: &str) -> String {
     crate::agent::normalize_quota_display_name(quota_name)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CellStyle {
+    fg: TuiColor,
+    bg: TuiColor,
+    modifier: Modifier,
+}
+
+fn write_styled_buffer<W: Write>(out: &mut W, buffer: &ratatui::buffer::Buffer) -> Result<()> {
+    let area = *buffer.area();
+    let mut active_style: Option<CellStyle> = None;
+
+    for y in 0..area.height {
+        for x in 0..area.width {
+            let cell = &buffer[(x, y)];
+            let style = CellStyle {
+                fg: cell.fg,
+                bg: cell.bg,
+                modifier: cell.modifier,
+            };
+            if active_style != Some(style) {
+                apply_cell_style(out, style)?;
+                active_style = Some(style);
+            }
+            queue!(out, Print(cell.symbol()))?;
+        }
+
+        // Reset at line boundaries so terminal state stays predictable.
+        queue!(
+            out,
+            SetAttribute(Attribute::Reset),
+            SetForegroundColor(CrosstermColor::Reset),
+            SetBackgroundColor(CrosstermColor::Reset),
+            Print("\r\n")
+        )?;
+        active_style = None;
+    }
+
+    Ok(())
+}
+
+fn apply_cell_style<W: Write>(out: &mut W, style: CellStyle) -> Result<()> {
+    queue!(
+        out,
+        SetAttribute(Attribute::Reset),
+        SetForegroundColor(to_crossterm_color(style.fg)),
+        SetBackgroundColor(to_crossterm_color(style.bg))
+    )?;
+
+    if style.modifier.contains(Modifier::BOLD) {
+        queue!(out, SetAttribute(Attribute::Bold))?;
+    }
+    if style.modifier.contains(Modifier::DIM) {
+        queue!(out, SetAttribute(Attribute::Dim))?;
+    }
+    if style.modifier.contains(Modifier::ITALIC) {
+        queue!(out, SetAttribute(Attribute::Italic))?;
+    }
+    if style.modifier.contains(Modifier::UNDERLINED) {
+        queue!(out, SetAttribute(Attribute::Underlined))?;
+    }
+    if style.modifier.contains(Modifier::SLOW_BLINK) {
+        queue!(out, SetAttribute(Attribute::SlowBlink))?;
+    }
+    if style.modifier.contains(Modifier::RAPID_BLINK) {
+        queue!(out, SetAttribute(Attribute::RapidBlink))?;
+    }
+    if style.modifier.contains(Modifier::REVERSED) {
+        queue!(out, SetAttribute(Attribute::Reverse))?;
+    }
+    if style.modifier.contains(Modifier::HIDDEN) {
+        queue!(out, SetAttribute(Attribute::Hidden))?;
+    }
+    if style.modifier.contains(Modifier::CROSSED_OUT) {
+        queue!(out, SetAttribute(Attribute::CrossedOut))?;
+    }
+
+    Ok(())
+}
+
+fn to_crossterm_color(color: TuiColor) -> CrosstermColor {
+    match color {
+        TuiColor::Reset => CrosstermColor::Reset,
+        TuiColor::Black => CrosstermColor::Black,
+        TuiColor::Red => CrosstermColor::DarkRed,
+        TuiColor::Green => CrosstermColor::DarkGreen,
+        TuiColor::Yellow => CrosstermColor::DarkYellow,
+        TuiColor::Blue => CrosstermColor::DarkBlue,
+        TuiColor::Magenta => CrosstermColor::DarkMagenta,
+        TuiColor::Cyan => CrosstermColor::DarkCyan,
+        TuiColor::Gray => CrosstermColor::Grey,
+        TuiColor::DarkGray => CrosstermColor::DarkGrey,
+        TuiColor::LightRed => CrosstermColor::Red,
+        TuiColor::LightGreen => CrosstermColor::Green,
+        TuiColor::LightYellow => CrosstermColor::Yellow,
+        TuiColor::LightBlue => CrosstermColor::Blue,
+        TuiColor::LightMagenta => CrosstermColor::Magenta,
+        TuiColor::LightCyan => CrosstermColor::Cyan,
+        TuiColor::White => CrosstermColor::White,
+        TuiColor::Rgb(r, g, b) => CrosstermColor::Rgb { r, g, b },
+        TuiColor::Indexed(value) => CrosstermColor::AnsiValue(value),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::agent::{UsageInfo, UsageWindow};
 
     use super::{
-        derive_display_name, derive_quota_name, normalize_quota_display_name, to_usage_json_agent,
+        derive_display_name, derive_quota_name, filter_extra_windows, normalize_quota_display_name,
+        to_usage_json_agent,
     };
 
     #[test]
@@ -420,5 +548,36 @@ mod tests {
         assert_eq!(json_agent.extra_quotas.len(), 1);
         assert_eq!(json_agent.extra_quotas[0].quota_name, "extra-usage");
         assert!(json_agent.extra_quotas[0].resets_at.is_none());
+    }
+
+    #[test]
+    fn filter_extra_windows_removes_only_extra_quotas() {
+        let mut usage = vec![UsageInfo {
+            agent_name: "codex".to_string(),
+            display_name: "Codex".to_string(),
+            plan: None,
+            windows: vec![
+                UsageWindow {
+                    name: "five-hour".to_string(),
+                    utilization_pct: 10.0,
+                    resets_at: Some("2026-02-28T18:00:00Z".to_string()),
+                    is_extra: false,
+                    source_limit_name: None,
+                },
+                UsageWindow {
+                    name: "gpt-5-3-codex-spark-seven-day".to_string(),
+                    utilization_pct: 30.0,
+                    resets_at: Some("2026-03-05T18:00:00Z".to_string()),
+                    is_extra: true,
+                    source_limit_name: Some("GPT-5.3-Codex-Spark".to_string()),
+                },
+            ],
+            extra_usage: None,
+        }];
+
+        filter_extra_windows(&mut usage);
+        assert_eq!(usage[0].windows.len(), 1);
+        assert_eq!(usage[0].windows[0].name, "five-hour");
+        assert!(!usage[0].windows[0].is_extra);
     }
 }
