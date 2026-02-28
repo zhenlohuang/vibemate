@@ -27,6 +27,7 @@ What each file is for:
 - `host`: local bind host.
 - `port`: local bind port.
 - `proxy`: optional outbound HTTP/SOCKS proxy for upstream requests.
+  - Examples: `http://127.0.0.1:7890`, `socks5h://127.0.0.1:7890`
 
 `[agents]`
 - `show_extra_quota`: show extra quota windows in usage/dashboard.
@@ -47,3 +48,4 @@ What each file is for:
 ## Notes
 - Keep `~/.vibemate/auth/*.json` private because they contain OAuth tokens.
 - If provider auth fails, verify both the provider section and matching routing rule names.
+- Proxy precedence is: environment proxy variables first (`https_proxy`, `all_proxy`, `http_proxy`, and uppercase forms), then `[server].proxy`.

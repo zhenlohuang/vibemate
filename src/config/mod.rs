@@ -12,7 +12,7 @@ pub const DEFAULT_FULL_CONFIG: &str = r#"# Vibemate configuration
 host = "127.0.0.1"
 port = 12345
 # Optional upstream HTTP/SOCKS proxy used for outbound provider requests
-# proxy = "socks5://127.0.0.1:7890"
+# proxy = "http://127.0.0.1:7890"
 
 [agents]
 # Show extra quotas (for example Codex additional_rate_limits) in `vibemate usage` and dashboard output

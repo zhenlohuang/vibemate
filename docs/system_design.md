@@ -366,7 +366,7 @@ Configuration is stored at `~/.vibemate/config.toml`. The path can be overridden
 [server]
 host = "127.0.0.1"
 port = 12345
-proxy = "socks5://127.0.0.1:1080"   # optional, HTTP/HTTPS/SOCKS5
+proxy = "http://127.0.0.1:1080"   # optional, HTTP/HTTPS/SOCKS5
 
 # Providers: generic targets with base_url + headers
 [providers.openai-official]
