@@ -1,19 +1,19 @@
 use std::collections::VecDeque;
 
 use crate::agent::UsageInfo;
-use crate::proxy::RequestLog;
+use crate::model_router::RequestLog;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ActivePage {
     #[default]
     Usage,
-    Proxy,
+    Router,
 }
 
 #[derive(Debug)]
 pub struct App {
-    pub proxy_addr: String,
-    pub proxy_running: bool,
+    pub router_addr: String,
+    pub router_running: bool,
     pub usage: Vec<UsageInfo>,
     pub logs: VecDeque<RequestLog>,
     pub log_scroll: usize,
@@ -22,10 +22,10 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(proxy_addr: String) -> Self {
+    pub fn new(router_addr: String) -> Self {
         Self {
-            proxy_addr,
-            proxy_running: false,
+            router_addr,
+            router_running: false,
             usage: Vec::new(),
             logs: VecDeque::with_capacity(1_000),
             log_scroll: 0,
@@ -42,13 +42,13 @@ impl App {
     }
 
     pub fn scroll_up(&mut self) {
-        if self.active_page == ActivePage::Proxy {
+        if self.active_page == ActivePage::Router {
             self.log_scroll = self.log_scroll.saturating_sub(1);
         }
     }
 
     pub fn scroll_down(&mut self) {
-        if self.active_page == ActivePage::Proxy {
+        if self.active_page == ActivePage::Router {
             let max_scroll = self.logs.len().saturating_sub(1);
             self.log_scroll = (self.log_scroll + 1).min(max_scroll);
         }
@@ -56,8 +56,8 @@ impl App {
 
     pub fn next_tab(&mut self) {
         self.active_page = match self.active_page {
-            ActivePage::Usage => ActivePage::Proxy,
-            ActivePage::Proxy => ActivePage::Usage,
+            ActivePage::Usage => ActivePage::Router,
+            ActivePage::Router => ActivePage::Usage,
         };
     }
 }

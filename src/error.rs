@@ -32,8 +32,8 @@ pub enum AppError {
     #[error("Missing 'model' field in request body")]
     MissingModel,
 
-    #[error("Proxy server error: {0}")]
-    ProxyServer(String),
+    #[error("Model router server error: {0}")]
+    RouterServer(String),
 
     #[error("Upstream error: HTTP {status} from {provider}")]
     Upstream { status: u16, provider: String },

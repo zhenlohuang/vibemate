@@ -27,7 +27,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                 .split(chunks[1]);
             usage::render(frame, body[0], &app.usage);
         }
-        ActivePage::Proxy => {
+        ActivePage::Router => {
             let body = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Length(3), Constraint::Min(5)])
@@ -42,9 +42,9 @@ pub fn render(frame: &mut Frame, app: &App) {
 fn tab_line(app: &App) -> Line<'static> {
     let selected = match app.active_page {
         ActivePage::Usage => 0,
-        ActivePage::Proxy => 1,
+        ActivePage::Router => 1,
     };
-    let tab_names = ["Usage", "Proxy"];
+    let tab_names = ["Usage", "Model Router"];
 
     let mut spans = vec![];
 

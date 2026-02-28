@@ -8,10 +8,10 @@ use tower_http::cors::CorsLayer;
 use crate::config::AppConfig;
 use crate::error::{AppError, Result};
 use crate::provider::ProviderRegistry;
-use crate::proxy::handler::{self, ProxyState};
-use crate::proxy::middleware::apply_middleware;
-use crate::proxy::router::ModelRouter;
-use crate::proxy::RequestLog;
+use crate::model_router::handler::{self, RouterState};
+use crate::model_router::middleware::apply_middleware;
+use crate::model_router::router::ModelRouter;
+use crate::model_router::RequestLog;
 
 pub async fn start(config: &AppConfig, log_tx: broadcast::Sender<RequestLog>) -> Result<()> {
     let mut client_builder = reqwest::Client::builder();
@@ -24,9 +24,9 @@ pub async fn start(config: &AppConfig, log_tx: broadcast::Sender<RequestLog>) ->
 
     let http_client = client_builder
         .build()
-        .map_err(|e| AppError::ProxyServer(format!("Failed to build HTTP client: {e}")))?;
+        .map_err(|e| AppError::RouterServer(format!("Failed to build HTTP client: {e}")))?;
 
-    let state = Arc::new(ProxyState {
+    let state = Arc::new(RouterState {
         provider_registry: ProviderRegistry::from_config(config),
         model_router: ModelRouter::from_config(&config.routing),
         http_client,
@@ -45,19 +45,19 @@ pub async fn start(config: &AppConfig, log_tx: broadcast::Sender<RequestLog>) ->
     let listener = tokio::net::TcpListener::bind((config.server.host.as_str(), config.server.port))
         .await
         .map_err(|e| {
-            AppError::ProxyServer(format!(
-                "Failed to bind proxy server on {}:{}: {e}",
+            AppError::RouterServer(format!(
+                "Failed to bind model router server on {}:{}: {e}",
                 config.server.host, config.server.port
             ))
         })?;
 
     tracing::info!(
-        "Proxy listening on http://{}:{}",
+        "Model router listening on http://{}:{}",
         config.server.host,
         config.server.port
     );
 
     axum::serve(listener, app)
         .await
-        .map_err(|e| AppError::ProxyServer(format!("Proxy server exited with error: {e}")))
+        .map_err(|e| AppError::RouterServer(format!("Model router server exited with error: {e}")))
 }

@@ -3,7 +3,7 @@ mod cli;
 mod config;
 mod error;
 mod provider;
-mod proxy;
+mod model_router;
 mod tui;
 
 use clap::{Parser, Subcommand};
@@ -18,7 +18,7 @@ use crate::error::Result;
     name = "vibemate",
     version,
     about = "Your vibe coding companion",
-    long_about = "A CLI for logging into supported agents, checking quota usage, running a local proxy, and viewing a terminal dashboard."
+    long_about = "A CLI for logging into supported agents, checking quota usage, running a local model router, and viewing a terminal dashboard."
 )]
 struct Cli {
     #[arg(
@@ -65,10 +65,10 @@ enum Commands {
         raw: bool,
     },
     #[command(
-        about = "Run the local proxy server",
-        long_about = "Start the Vibemate proxy server using the configured host and port."
+        about = "Run the local model router server",
+        long_about = "Start the Vibemate model router server using the configured host and port."
     )]
-    Proxy,
+    Router,
     #[command(
         about = "Launch the interactive terminal dashboard",
         long_about = "Start the proxy and open the TUI dashboard with logs and usage panels."
@@ -107,7 +107,7 @@ async fn main() -> Result<()> {
                 Commands::Usage { json, raw } => {
                     cli::usage::run(&config, cli::usage::UsageOptions { json, raw }).await
                 }
-                Commands::Proxy => cli::proxy::run(&config).await,
+                Commands::Router => cli::router::run(&config).await,
                 Commands::Dashboard => cli::dashboard::run(&config).await,
                 Commands::Config { .. } => unreachable!("handled above"),
             }

@@ -10,12 +10,12 @@ use tokio::sync::broadcast;
 
 use crate::error::AppError;
 use crate::provider::ProviderRegistry;
-use crate::proxy::router::ModelRouter;
-use crate::proxy::stream::relay_sse_stream;
-use crate::proxy::RequestLog;
+use crate::model_router::router::ModelRouter;
+use crate::model_router::stream::relay_sse_stream;
+use crate::model_router::RequestLog;
 
 #[derive(Clone)]
-pub struct ProxyState {
+pub struct RouterState {
     pub provider_registry: ProviderRegistry,
     pub model_router: ModelRouter,
     pub http_client: reqwest::Client,
@@ -23,7 +23,7 @@ pub struct ProxyState {
 }
 
 pub async fn chat_completions(
-    State(state): State<Arc<ProxyState>>,
+    State(state): State<Arc<RouterState>>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
@@ -38,7 +38,7 @@ pub async fn chat_completions(
 }
 
 pub async fn responses(
-    State(state): State<Arc<ProxyState>>,
+    State(state): State<Arc<RouterState>>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
@@ -46,7 +46,7 @@ pub async fn responses(
 }
 
 pub async fn messages(
-    State(state): State<Arc<ProxyState>>,
+    State(state): State<Arc<RouterState>>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
@@ -54,7 +54,7 @@ pub async fn messages(
 }
 
 async fn forward_request(
-    state: Arc<ProxyState>,
+    state: Arc<RouterState>,
     upstream_path: &str,
     request_path: &str,
     headers: HeaderMap,

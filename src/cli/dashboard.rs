@@ -14,7 +14,7 @@ use crate::agent::auth::token::{auth_file_path, save_token};
 use crate::agent::{global_agent_registry, UsageInfo};
 use crate::config::AppConfig;
 use crate::error::Result;
-use crate::proxy;
+use crate::model_router;
 use crate::tui::app::App;
 use crate::tui::ui;
 
@@ -46,8 +46,8 @@ async fn run_dashboard_loop(
     let (log_tx, mut log_rx) = broadcast::channel(1024);
     let (usage_tx, mut usage_rx) = mpsc::channel::<UsageUpdate>(8);
 
-    let proxy_config = config.clone();
-    let proxy_task = tokio::spawn(async move { proxy::server::start(&proxy_config, log_tx).await });
+    let router_config = config.clone();
+    let router_task = tokio::spawn(async move { model_router::server::start(&router_config, log_tx).await });
 
     let usage_task_tx = usage_tx.clone();
     let show_extra_quota = config.show_extra_quota();
@@ -66,7 +66,7 @@ async fn run_dashboard_loop(
         "http://{}:{}",
         config.server.host, config.server.port
     ));
-    app.proxy_running = true;
+    app.router_running = true;
 
     loop {
         while let Ok(log) = log_rx.try_recv() {
@@ -78,9 +78,9 @@ async fn run_dashboard_loop(
             app.status_message = update.message;
         }
 
-        if proxy_task.is_finished() {
-            app.proxy_running = false;
-            app.status_message = Some("Proxy task stopped unexpectedly".to_string());
+        if router_task.is_finished() {
+            app.router_running = false;
+            app.status_message = Some("Router task stopped unexpectedly".to_string());
         }
 
         terminal.draw(|frame| ui::render(frame, &app))?;
@@ -108,7 +108,7 @@ async fn run_dashboard_loop(
         }
     }
 
-    proxy_task.abort();
+    router_task.abort();
     usage_task.abort();
 
     Ok(())

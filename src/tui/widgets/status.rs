@@ -4,17 +4,17 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use crate::tui::app::App;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
-    let status = if app.proxy_running { "ON" } else { "OFF" };
-    let color = if app.proxy_running {
+    let status = if app.router_running { "ON" } else { "OFF" };
+    let color = if app.router_running {
         Color::Green
     } else {
         Color::Red
     };
 
     let text = Line::from(vec![
-        Span::raw("Proxy: "),
+        Span::raw("Endpoint: "),
         Span::styled(
-            app.proxy_addr.clone(),
+            app.router_addr.clone(),
             Style::default().add_modifier(Modifier::BOLD),
         ),
         Span::raw("  ["),

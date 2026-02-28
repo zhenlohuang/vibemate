@@ -1,11 +1,11 @@
 # Vibemate - Your Vibe Coding Mate
 
-Vibemate is a local CLI companion for coding agents, with OAuth login, usage tracking, and a unified API proxy.
+Vibemate is a local CLI companion for coding agents, with OAuth login, usage tracking, and a unified model router.
 
 ## Features
 1. Agent OAuth login
 2. Usage and quota query
-3. API proxy with model-based routing
+3. Model router with model-based routing
 
 ## Supported Agents
 | Name | Status |
@@ -46,14 +46,14 @@ For full configuration details, see [docs/configuration.md](./docs/configuration
 
 ## Commands
 ```text
-A CLI for logging into supported agents, checking quota usage, running a local proxy, and viewing a terminal dashboard.
+A CLI for logging into supported agents, checking quota usage, running a local model router, and viewing a terminal dashboard.
 
 Usage: vibemate [OPTIONS] <COMMAND>
 
 Commands:
   login      Authenticate with an agent provider
   usage      Show usage and quota information
-  proxy      Run the local proxy server
+  router     Run the local model router server
   dashboard  Launch the interactive terminal dashboard
   config     Inspect or initialize the config file
   help       Print this message or the help of the given subcommand(s)

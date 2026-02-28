@@ -2,14 +2,14 @@
 
 ## 1. Project Overview & Scope
 
-Vibemate is a Rust CLI tool that acts as a local AI model proxy and usage dashboard for coding agents. It is inspired by [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) (Go), but intentionally limited in scope to two coding agents: **Codex** (OpenAI) and **Claude Code** (Anthropic).
+Vibemate is a Rust CLI tool that acts as a local AI model router and usage dashboard for coding agents. It is inspired by [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) (Go), but intentionally limited in scope to two coding agents: **Codex** (OpenAI) and **Claude Code** (Anthropic).
 
 ### Goals
 
-- **Unified proxy**: Expose a single local HTTP endpoint that routes requests to multiple upstream AI providers based on configurable model routing rules.
+- **Unified model router**: Expose a single local HTTP endpoint that routes requests to multiple upstream AI providers based on configurable model routing rules.
 - **OAuth login**: Authenticate with Codex and Claude Code via PKCE OAuth flows, storing tokens locally.
 - **Usage monitoring**: Query quota/usage information from both providers and display it in the terminal.
-- **TUI dashboard**: A terminal UI that combines the proxy server, usage gauges, and live request logs into one view.
+- **TUI dashboard**: A terminal UI that combines the model router server, usage gauges, and live request logs into one view.
 
 ### CLI Commands
 
@@ -20,8 +20,8 @@ Vibemate is a Rust CLI tool that acts as a local AI model proxy and usage dashbo
 | `vibemate usage` | Display quota/usage for logged-in coding agents |
 | `vibemate usage --json` | Display normalized usage as pretty JSON |
 | `vibemate usage --raw` | Display raw usage payloads from each agent as pretty JSON |
-| `vibemate proxy` | Start the proxy server (foreground) |
-| `vibemate dashboard` | Start the TUI dashboard (proxy + usage + request logs) |
+| `vibemate router` | Start the model router server (foreground) |
+| `vibemate dashboard` | Start the TUI dashboard (model router + usage + request logs) |
 
 ---
 
@@ -44,13 +44,13 @@ vibemate/
       mod.rs                   # CLI module root
       login.rs                 # `vibemate login` command
       usage.rs                 # `vibemate usage` command
-      proxy.rs                 # `vibemate proxy` command
+      router.rs                # `vibemate router` command
       dashboard.rs             # `vibemate dashboard` command
     config/
       mod.rs                   # Config loading, validation, defaults
       types.rs                 # Config structs (serde-backed)
-    proxy/
-      mod.rs                   # Proxy module root
+    model_router/
+      mod.rs                   # Model router module root
       server.rs                # Axum server, route registration
       router.rs                # Model-based routing logic
       handler.rs               # Request handler (forward + stream)
@@ -78,7 +78,7 @@ vibemate/
       ui.rs                    # Layout rendering
       widgets/
         mod.rs
-        status.rs              # Proxy status widget
+        status.rs              # Model router status widget
         usage.rs               # Quota/usage widget
         logs.rs                # Request log widget
     error.rs                   # Unified error types
@@ -96,7 +96,7 @@ Vibemate follows a layered architecture where each layer has well-defined respon
 +------------------+
          |
 +------------------+     +------------------+
-|  Proxy Layer     |     |   TUI Layer      |  ratatui
+| Model Router     |     |   TUI Layer      |  ratatui
 |  (axum server)   |<--->|  (dashboard)     |
 +------------------+     +------------------+
          |                        |
@@ -119,11 +119,11 @@ Vibemate follows a layered architecture where each layer has well-defined respon
 ### Data Flow
 
 1. **CLI** parses commands and dispatches to the appropriate subsystem.
-2. The **proxy server** receives HTTP requests from coding agents.
+2. The **model router server** receives HTTP requests from coding agents.
 3. The **router** inspects the `model` field in the request body to select a provider and optionally remap the model name.
 4. The **provider** forwards the request to the upstream API with the configured headers.
 5. Responses (including SSE streams) are relayed back to the client.
-6. The **TUI dashboard** composes the proxy server, usage polling, and request logging into one terminal interface.
+6. The **TUI dashboard** composes the model router server, usage polling, and request logging into one terminal interface.
 
 ---
 
@@ -135,7 +135,7 @@ Uses clap derive for argument parsing.
 
 ```rust
 #[derive(Parser)]
-#[command(name = "vibemate", version, about = "AI model proxy and usage dashboard")]
+#[command(name = "vibemate", version, about = "AI model router and usage dashboard")]
 struct Cli {
     #[arg(long, default_value = "~/.vibemate/config.toml")]
     config: PathBuf,
@@ -160,8 +160,8 @@ enum Commands {
         #[arg(long, conflicts_with = "json")]
         raw: bool,
     },
-    /// Start the proxy server
-    Proxy,
+    /// Start the model router server
+    Router,
     /// Start the TUI dashboard
     Dashboard,
 }
@@ -226,7 +226,7 @@ impl ProviderRegistry {
 }
 ```
 
-### 4.4 Router (`src/proxy/router.rs`)
+### 4.4 Router (`src/model_router/router.rs`)
 
 Routes incoming requests to the appropriate provider based on the model name.
 
@@ -296,8 +296,8 @@ PKCE is implemented directly with `sha2` + `base64` + `rand` (the `oauth2` crate
 
 ```rust
 pub struct App {
-    pub proxy_addr: String,
-    pub proxy_running: bool,
+    pub router_addr: String,
+    pub router_running: bool,
     pub usage: Vec<UsageInfo>,
     pub logs: VecDeque<RequestLog>,  // bounded buffer (~1000 entries)
     pub log_scroll: usize,
@@ -314,7 +314,7 @@ pub struct RequestLog {
 }
 ```
 
-Communication between the proxy handler and the TUI uses a `tokio::sync::broadcast::Sender<RequestLog>` channel.
+Communication between the model router handler and the TUI uses a `tokio::sync::broadcast::Sender<RequestLog>` channel.
 
 ### 4.7 Error (`src/error.rs`)
 
@@ -348,8 +348,8 @@ pub enum AppError {
     #[error("Missing 'model' field in request body")]
     MissingModel,
 
-    #[error("Proxy server error: {0}")]
-    ProxyServer(String),
+    #[error("Model router server error: {0}")]
+    RouterServer(String),
 
     #[error("Upstream error: HTTP {status} from {provider}")]
     Upstream { status: u16, provider: String },
@@ -410,7 +410,7 @@ provider = "anthropic-official"
 
 ---
 
-## 6. API Endpoints & Proxy Flow
+## 6. API Endpoints & Request Flow
 
 ### Endpoints
 
@@ -420,7 +420,7 @@ provider = "anthropic-official"
 | `POST /api/v1/responses` | OpenAI | `{base_url}/v1/responses` |
 | `POST /api/v1/messages` | Anthropic | `{base_url}/v1/messages` |
 
-### Proxy Flow (Step-by-Step)
+### Request Flow (Step-by-Step)
 
 1. **Receive**: Axum handler receives the incoming request with the raw body bytes.
 2. **Parse**: Deserialize body as JSON, extract the `model` field.
@@ -438,7 +438,7 @@ provider = "anthropic-official"
 
 ### Header Handling
 
-Headers are configured per-provider in the TOML config (not hardcoded by type). The proxy:
+Headers are configured per-provider in the TOML config (not hardcoded by type). The model router:
 - Sets the provider's configured headers on the upstream request.
 - Sets `Content-Type: application/json`.
 - Forwards the client's `Accept` header.
@@ -529,7 +529,7 @@ Response format:
 +============================================+
 |  vibemate v0.1.0               [q]uit     |
 +============================================+
-|  Proxy: http://127.0.0.1:12345/api   [ON] |
+| Endpoint: http://127.0.0.1:12345/api [ON] |
 +--------------------------------------------+
 |                 Quotas                     |
 | +-------------------+-------------------+ |
@@ -554,7 +554,7 @@ Response format:
 ### Components
 
 1. **Header Bar**: Application name, version, keybinding hints.
-2. **Proxy Status**: Listening address, running indicator (green/red).
+2. **Model Router Status**: Listening address, running indicator (green/red).
 3. **Quota Panel**: Side-by-side cards for each logged-in agent, with gauge bars for each usage window and reset countdown.
 4. **Request Log Panel**: Scrollable table of recent forwarded requests — timestamp, method, path, resolved provider, status code, latency.
 5. **Footer**: Keyboard shortcuts.
@@ -572,9 +572,9 @@ Response format:
 ### Implementation Details
 
 - App state holds a `VecDeque<RequestLog>` bounded at ~1000 entries.
-- The proxy server runs as a background `tokio` task.
+- The model router server runs as a background `tokio` task.
 - Usage polling runs every 60 seconds in a separate task.
-- Request logs flow from the proxy handler to the TUI via `tokio::sync::broadcast` channel.
+- Request logs flow from the model router handler to the TUI via `tokio::sync::broadcast` channel.
 - Ratatui terminal event loop with 100ms tick rate.
 
 ---
@@ -586,7 +586,7 @@ Response format:
 | Layer | Strategy |
 |---|---|
 | **CLI** | Errors printed with `anyhow` context and exit code 1. Messages suggest corrective actions. |
-| **Proxy** | Returns appropriate HTTP status codes (502 upstream, 400 bad request, 500 internal). Errors logged via `tracing`. |
+| **Model Router** | Returns appropriate HTTP status codes (502 upstream, 400 bad request, 500 internal). Errors logged via `tracing`. |
 | **OAuth** | Token refresh failures suggest re-login. Network errors suggest checking connectivity/proxy. |
 | **TUI** | Errors displayed in the status bar, dashboard continues running. |
 
@@ -694,22 +694,22 @@ The `oauth2` crate is **intentionally omitted**. Both Codex and Claude Code use 
 - Implement `agent/impls/claude.rs` (Claude Code login + usage query).
 - Implement `cli/login.rs` and `cli/usage.rs`.
 
-### Phase 3 — Proxy Server
+### Phase 3 — Model Router Server
 
 - Implement `provider/` module (provider registry, request forwarding).
-- Implement `proxy/router.rs` (model routing with wildcard matching).
-- Implement `proxy/handler.rs` (request forwarding, body transformation).
-- Implement `proxy/stream.rs` (SSE relay for streaming responses).
-- Implement `proxy/server.rs` (axum server setup, route registration).
-- Implement `proxy/middleware.rs` (logging middleware).
-- Implement `cli/proxy.rs`.
+- Implement `model_router/router.rs` (model routing with wildcard matching).
+- Implement `model_router/handler.rs` (request forwarding, body transformation).
+- Implement `model_router/stream.rs` (SSE relay for streaming responses).
+- Implement `model_router/server.rs` (axum server setup, route registration).
+- Implement `model_router/middleware.rs` (logging middleware).
+- Implement `cli/router.rs`.
 
 ### Phase 4 — TUI Dashboard
 
 - Implement `tui/app.rs` (application state management).
 - Implement `tui/ui.rs` (layout rendering with ratatui).
 - Implement `tui/widgets/` (status, usage gauges, request log table).
-- Implement `cli/dashboard.rs` (compose proxy + TUI event loop).
+- Implement `cli/dashboard.rs` (compose model router + TUI event loop).
 
 ### Phase 5 — Polish
 

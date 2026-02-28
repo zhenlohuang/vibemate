@@ -1,7 +1,7 @@
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Cell, Row, Table};
 
-use crate::proxy::RequestLog;
+use crate::model_router::RequestLog;
 
 pub fn render(frame: &mut Frame, area: Rect, logs: &[RequestLog], scroll: usize) {
     let block = Block::default().borders(Borders::ALL).title("Request Logs");
