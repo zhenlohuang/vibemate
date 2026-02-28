@@ -4,7 +4,7 @@ use serde_json::Value;
 use crate::error::Result;
 
 use super::auth::token::AgentToken;
-use super::types::{normalize_quota_display_name, AgentDescriptor, UsageInfo, UsageWindow};
+use super::types::{AgentDescriptor, UsageInfo, UsageWindow, normalize_quota_display_name};
 
 pub trait AgentIdentity: Send + Sync {
     fn descriptor(&self) -> &'static AgentDescriptor;

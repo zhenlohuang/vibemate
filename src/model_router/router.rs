@@ -1,4 +1,4 @@
-use crate::config::{RoutingConfig, RoutingRule};
+use crate::config::{RouterConfig, RoutingRule};
 
 #[derive(Debug, Clone)]
 pub struct ResolvedRoute {
@@ -13,7 +13,7 @@ pub struct ModelRouter {
 }
 
 impl ModelRouter {
-    pub fn from_config(config: &RoutingConfig) -> Self {
+    pub fn from_config(config: &RouterConfig) -> Self {
         Self {
             default_provider: config.default_provider.clone(),
             rules: config.rules.clone(),

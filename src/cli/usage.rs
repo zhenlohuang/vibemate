@@ -4,7 +4,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::agent::auth::token::{auth_file_path, save_token};
-use crate::agent::{global_agent_registry, AgentUsageCapability, UsageInfo, UsageWindow};
+use crate::agent::{AgentUsageCapability, UsageInfo, UsageWindow, global_agent_registry};
 use crate::config::AppConfig;
 use crate::error::{AppError, Result};
 

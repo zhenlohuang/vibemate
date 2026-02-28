@@ -1,10 +1,10 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use axum::Router;
 use axum::extract::Request;
-use axum::http::{header::HeaderName, HeaderValue};
+use axum::http::{HeaderValue, header::HeaderName};
 use axum::middleware::Next;
 use axum::response::Response;
-use axum::Router;
 use tower_http::trace::TraceLayer;
 
 static REQUEST_ID_COUNTER: AtomicU64 = AtomicU64::new(1);

@@ -8,10 +8,10 @@ use std::io::ErrorKind;
 use url::Url;
 
 use crate::agent::auth::pkce::{generate_challenge, generate_state, generate_verifier};
-use crate::agent::auth::token::{auth_file_path, load_token, save_token, AgentToken};
+use crate::agent::auth::token::{AgentToken, auth_file_path, load_token, save_token};
 use crate::agent::{
-    normalize_quota_display_name, Agent, AgentAuthCapability, AgentDescriptor, AgentIdentity,
-    AgentUsageCapability, UsageInfo, UsageWindow,
+    Agent, AgentAuthCapability, AgentDescriptor, AgentIdentity, AgentUsageCapability, UsageInfo,
+    UsageWindow, normalize_quota_display_name,
 };
 use crate::error::{AppError, Result};
 
@@ -737,14 +737,18 @@ mod tests {
                 && (w.utilization_pct - 5.0).abs() < 0.0001
                 && w.resets_at.as_deref().is_some()
         }));
-        assert!(!usage
-            .windows
-            .iter()
-            .any(|w| w.name == "additional-rate-limits"));
-        assert!(usage
-            .windows
-            .iter()
-            .any(|w| w.name == "gpt-5-3-codex-spark-five-hour" && w.is_extra));
+        assert!(
+            !usage
+                .windows
+                .iter()
+                .any(|w| w.name == "additional-rate-limits")
+        );
+        assert!(
+            usage
+                .windows
+                .iter()
+                .any(|w| w.name == "gpt-5-3-codex-spark-five-hour" && w.is_extra)
+        );
     }
 
     #[test]

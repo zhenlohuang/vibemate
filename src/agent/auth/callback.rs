@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
+use axum::Router;
 use axum::extract::{Query, State};
 use axum::response::Html;
 use axum::routing::get;
-use axum::Router;
 use serde::Deserialize;
 use tokio::net::TcpListener;
-use tokio::sync::{oneshot, Mutex};
+use tokio::sync::{Mutex, oneshot};
 
 use crate::error::{AppError, Result};
 

@@ -4,14 +4,14 @@ use std::time::Duration;
 use crossterm::event::{self, Event, KeyCode};
 use crossterm::execute;
 use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
+use ratatui::backend::CrosstermBackend;
 use tokio::sync::{broadcast, mpsc};
 
 use crate::agent::auth::token::{auth_file_path, save_token};
-use crate::agent::{global_agent_registry, UsageInfo};
+use crate::agent::{UsageInfo, global_agent_registry};
 use crate::config::AppConfig;
 use crate::error::Result;
 use crate::model_router;
@@ -47,7 +47,8 @@ async fn run_dashboard_loop(
     let (usage_tx, mut usage_rx) = mpsc::channel::<UsageUpdate>(8);
 
     let router_config = config.clone();
-    let router_task = tokio::spawn(async move { model_router::server::start(&router_config, log_tx).await });
+    let router_task =
+        tokio::spawn(async move { model_router::server::start(&router_config, log_tx).await });
 
     let usage_task_tx = usage_tx.clone();
     let show_extra_quota = config.show_extra_quota();
@@ -64,7 +65,7 @@ async fn run_dashboard_loop(
 
     let mut app = App::new(format!(
         "http://{}:{}",
-        config.server.host, config.server.port
+        config.router.host, config.router.port
     ));
     app.router_running = true;
 

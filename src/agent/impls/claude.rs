@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::agent::auth::pkce::{generate_challenge, generate_state, generate_verifier};
-use crate::agent::auth::token::{auth_file_path, load_token, save_token, AgentToken};
+use crate::agent::auth::token::{AgentToken, auth_file_path, load_token, save_token};
 use crate::agent::{
     Agent, AgentAuthCapability, AgentDescriptor, AgentIdentity, AgentUsageCapability, UsageInfo,
     UsageWindow,
@@ -584,10 +584,12 @@ mod tests {
         });
 
         let usage = parse_usage(value).expect("parse should succeed");
-        assert!(usage
-            .windows
-            .iter()
-            .any(|w| { w.name == "sonnet-4" && (w.utilization_pct - 23.0).abs() < 0.0001 }));
+        assert!(
+            usage
+                .windows
+                .iter()
+                .any(|w| { w.name == "sonnet-4" && (w.utilization_pct - 23.0).abs() < 0.0001 })
+        );
     }
 
     #[test]

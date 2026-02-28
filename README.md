@@ -41,7 +41,7 @@ Run the dashboard:
 vibemate dashboard
 ```
 
-Then configure your providers and routing in `~/.vibemate/config.toml`.
+Then configure your providers and router rules in `~/.vibemate/config.toml`.
 For full configuration details, see [docs/configuration.md](./docs/configuration.md).
 
 ## Commands
@@ -81,9 +81,14 @@ Vibemate initializes an empty config file by default at:
 ## Minimal working example
 
 ```toml
-[server]
+[system]
+proxy = "http://127.0.0.1:7890"
+
+[router]
 host = "127.0.0.1"
 port = 12345
+default_provider = "openai-official"
+rules = []
 
 [agents]
 show_extra_quota = false
@@ -93,13 +98,22 @@ usage_refresh_interval_secs = 300
 base_url = "https://api.openai.com/v1"
 api_key = "sk-your-openai-api-key"
 
-[routing]
-default_provider = "openai-official"
-rules = []
 ```
 
 ## Multi-provider routing example
 ```toml
+[system]
+proxy = "http://127.0.0.1:7890"
+
+[router]
+host = "127.0.0.1"
+port = 12345
+default_provider = "openai-official"
+rules = [
+  { pattern = "claude-*", provider = "openrouter" },
+  { pattern = "o1-mini", provider = "openrouter", model = "openai/o1-mini" }
+]
+
 [providers.openai-official]
 base_url = "https://api.openai.com/v1"
 api_key = "sk-your-openai-api-key"
@@ -108,13 +122,6 @@ api_key = "sk-your-openai-api-key"
 base_url = "https://openrouter.ai/api/v1"
 api_key = "sk-or-v1-your-openrouter-key"
 headers = { "HTTP-Referer" = "https://example.com", "X-Title" = "Vibemate" }
-
-[routing]
-default_provider = "openai-official"
-rules = [
-  { pattern = "claude-*", provider = "openrouter" },
-  { pattern = "o1-mini", provider = "openrouter", model = "openai/o1-mini" }
-]
 ```
 
 Detailed configuration guide: [docs/configuration.md](./docs/configuration.md)

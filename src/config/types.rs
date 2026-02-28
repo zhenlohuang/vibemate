@@ -3,21 +3,21 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 #[derive(Debug, Deserialize, Clone)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct AppConfig {
-    pub server: ServerConfig,
+    pub system: SystemConfig,
+    pub router: RouterConfig,
     pub agents: AgentsConfig,
     pub providers: HashMap<String, ProviderConfig>,
-    pub routing: RoutingConfig,
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            server: ServerConfig::default(),
+            system: SystemConfig::default(),
+            router: RouterConfig::default(),
             agents: AgentsConfig::default(),
             providers: HashMap::new(),
-            routing: RoutingConfig::default(),
         }
     }
 }
@@ -34,25 +34,21 @@ impl AppConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
-#[serde(default)]
-pub struct ServerConfig {
-    pub host: String,
-    pub port: u16,
+#[serde(default, deny_unknown_fields)]
+pub struct SystemConfig {
     pub proxy: Option<String>,
 }
 
-impl Default for ServerConfig {
+impl Default for SystemConfig {
     fn default() -> Self {
         Self {
-            host: "127.0.0.1".to_string(),
-            port: 12_345,
-            proxy: Some("socks5://127.0.0.1:7890".to_string()),
+            proxy: Some("http://127.0.0.1:7890".to_string()),
         }
     }
 }
 
 #[derive(Debug, Deserialize, Clone)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct AgentsConfig {
     pub show_extra_quota: bool,
     pub usage_refresh_interval_secs: u64,
@@ -68,6 +64,7 @@ impl Default for AgentsConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct ProviderConfig {
     pub base_url: String,
     #[serde(default)]
@@ -77,15 +74,19 @@ pub struct ProviderConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
-#[serde(default)]
-pub struct RoutingConfig {
+#[serde(default, deny_unknown_fields)]
+pub struct RouterConfig {
+    pub host: String,
+    pub port: u16,
     pub default_provider: String,
     pub rules: Vec<RoutingRule>,
 }
 
-impl Default for RoutingConfig {
+impl Default for RouterConfig {
     fn default() -> Self {
         Self {
+            host: "127.0.0.1".to_string(),
+            port: 12_345,
             default_provider: "openai-official".to_string(),
             rules: Vec::new(),
         }
@@ -93,6 +94,7 @@ impl Default for RoutingConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct RoutingRule {
     pub pattern: String,
     pub provider: String,

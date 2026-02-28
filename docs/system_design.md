@@ -174,28 +174,28 @@ Loads and validates the TOML configuration file. See [Section 5](#5-configuratio
 ```rust
 #[derive(Debug, Deserialize)]
 pub struct AppConfig {
-    pub server: ServerConfig,
+    pub system: SystemConfig,
+    pub router: RouterConfig,
     pub providers: HashMap<String, ProviderConfig>,
-    pub routing: RoutingConfig,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct ServerConfig {
+pub struct SystemConfig {
+    pub proxy: Option<String>, // optional network proxy URL
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RouterConfig {
     pub host: String,          // default: "127.0.0.1"
     pub port: u16,             // default: 12345
-    pub proxy: Option<String>, // optional network proxy URL
+    pub default_provider: String,
+    pub rules: Vec<RoutingRule>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct ProviderConfig {
     pub base_url: String,
     pub headers: HashMap<String, String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct RoutingConfig {
-    pub default_provider: String,
-    pub rules: Vec<RoutingRule>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -363,10 +363,17 @@ pub enum AppError {
 Configuration is stored at `~/.vibemate/config.toml`. The path can be overridden with `--config`.
 
 ```toml
-[server]
+[system]
+proxy = "http://127.0.0.1:7890"     # optional, HTTP/HTTPS/SOCKS5
+
+[router]
 host = "127.0.0.1"
 port = 12345
-proxy = "socks5://127.0.0.1:1080"   # optional, HTTP/HTTPS/SOCKS5
+default_provider = "openai-official"
+rules = [
+  { pattern = "my-gpt4", provider = "openai-official", model = "gpt-4" },
+  { pattern = "claude-*", provider = "anthropic-official" }
+]
 
 # Providers: generic targets with base_url + headers
 [providers.openai-official]
@@ -376,30 +383,15 @@ headers = { Authorization = "Bearer sk-..." }
 [providers.anthropic-official]
 base_url = "https://api.anthropic.com"
 headers = { x-api-key = "sk-ant-...", anthropic-version = "2023-06-01" }
-
-# Routing: default provider + ordered wildcard rules
-[routing]
-default_provider = "openai-official"
-
-[[routing.rules]]
-pattern = "my-gpt4"
-provider = "openai-official"
-model = "gpt-4"                      # optional: remap model name
-
-[[routing.rules]]
-pattern = "claude-*"
-provider = "anthropic-official"
-
-# Unmatched models -> default_provider, original model name preserved
 ```
 
 ### Key Design Decisions
 
 1. **No provider type distinction** — providers are purely generic with `base_url` + `headers`.
-2. **`default_provider`** in `[routing]` handles unmatched models (no catch-all `*` rule needed).
+2. **`default_provider`** in `[router]` handles unmatched models (no catch-all `*` rule needed).
 3. **Routing rules** are an ordered list with glob-style wildcard matching (`*` matches any characters); first match wins.
 4. **Optional model name remapping** — if `model` field is omitted in a rule, the original model name passes through.
-5. **Server and network proxy are merged** into a single `[server]` section.
+5. **Router bind + routing rules are merged** into a single `[router]` section, while proxy is isolated in `[system]`.
 
 ### Token Storage (separate from config)
 
@@ -426,7 +418,7 @@ provider = "anthropic-official"
 2. **Parse**: Deserialize body as JSON, extract the `model` field.
 3. **Route**: `ModelRouter::resolve(model)` returns `ResolvedRoute { provider, model }`.
 4. **Transform**: Replace the `model` field in the body with the resolved model name (if remapped).
-5. **Build upstream request**: Use the shared `reqwest::Client` (configured with optional network proxy from `[server].proxy`).
+5. **Build upstream request**: Use the shared `reqwest::Client` (configured with optional network proxy from `[system].proxy`).
 6. **Forward**: Send request to `{provider.base_url}{upstream_path}` with the provider's configured headers.
 7. **Check streaming**: If the request has `stream: true`:
    - Read the upstream response as a byte stream.

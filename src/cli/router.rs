@@ -9,7 +9,7 @@ pub async fn run(config: &AppConfig) -> Result<()> {
 
     println!(
         "Model router listening on http://{}:{}",
-        config.server.host, config.server.port
+        config.router.host, config.router.port
     );
 
     model_router::server::start(config, log_tx).await

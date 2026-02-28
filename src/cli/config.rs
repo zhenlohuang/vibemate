@@ -2,7 +2,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
 
-use crate::config::{expand_tilde, DEFAULT_FULL_CONFIG};
+use crate::config::{DEFAULT_FULL_CONFIG, expand_tilde};
 use crate::error::Result;
 
 pub fn run(init: bool, config_path: &Path) -> Result<()> {

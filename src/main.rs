@@ -2,8 +2,8 @@ mod agent;
 mod cli;
 mod config;
 mod error;
-mod provider;
 mod model_router;
+mod provider;
 mod tui;
 
 use clap::{Parser, Subcommand};

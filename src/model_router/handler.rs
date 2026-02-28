@@ -3,16 +3,16 @@ use std::time::Instant;
 
 use axum::body::{Body, Bytes};
 use axum::extract::State;
-use axum::http::{header, HeaderMap, HeaderName, HeaderValue, StatusCode};
+use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::sync::broadcast;
 
 use crate::error::AppError;
-use crate::provider::ProviderRegistry;
+use crate::model_router::RequestLog;
 use crate::model_router::router::ModelRouter;
 use crate::model_router::stream::relay_sse_stream;
-use crate::model_router::RequestLog;
+use crate::provider::ProviderRegistry;
 
 #[derive(Clone)]
 pub struct RouterState {

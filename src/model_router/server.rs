@@ -1,22 +1,22 @@
 use std::sync::Arc;
 
-use axum::routing::post;
 use axum::Router;
+use axum::routing::post;
 use tokio::sync::broadcast;
 use tower_http::cors::CorsLayer;
 
 use crate::config::AppConfig;
 use crate::error::{AppError, Result};
-use crate::provider::ProviderRegistry;
+use crate::model_router::RequestLog;
 use crate::model_router::handler::{self, RouterState};
 use crate::model_router::middleware::apply_middleware;
 use crate::model_router::router::ModelRouter;
-use crate::model_router::RequestLog;
+use crate::provider::ProviderRegistry;
 
 pub async fn start(config: &AppConfig, log_tx: broadcast::Sender<RequestLog>) -> Result<()> {
     let mut client_builder = reqwest::Client::builder();
 
-    if let Some(proxy) = &config.server.proxy {
+    if let Some(proxy) = &config.system.proxy {
         let proxy_config = reqwest::Proxy::all(proxy)
             .map_err(|e| AppError::Config(format!("Invalid network proxy URL '{proxy}': {e}")))?;
         client_builder = client_builder.proxy(proxy_config);
@@ -28,7 +28,7 @@ pub async fn start(config: &AppConfig, log_tx: broadcast::Sender<RequestLog>) ->
 
     let state = Arc::new(RouterState {
         provider_registry: ProviderRegistry::from_config(config),
-        model_router: ModelRouter::from_config(&config.routing),
+        model_router: ModelRouter::from_config(&config.router),
         http_client,
         log_tx,
     });
@@ -42,19 +42,19 @@ pub async fn start(config: &AppConfig, log_tx: broadcast::Sender<RequestLog>) ->
 
     let app = apply_middleware(app);
 
-    let listener = tokio::net::TcpListener::bind((config.server.host.as_str(), config.server.port))
+    let listener = tokio::net::TcpListener::bind((config.router.host.as_str(), config.router.port))
         .await
         .map_err(|e| {
             AppError::RouterServer(format!(
                 "Failed to bind model router server on {}:{}: {e}",
-                config.server.host, config.server.port
+                config.router.host, config.router.port
             ))
         })?;
 
     tracing::info!(
         "Model router listening on http://{}:{}",
-        config.server.host,
-        config.server.port
+        config.router.host,
+        config.router.port
     );
 
     axum::serve(listener, app)

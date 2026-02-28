@@ -1,6 +1,6 @@
 mod types;
 
-pub use types::{AppConfig, RoutingConfig, RoutingRule};
+pub use types::{AppConfig, RouterConfig, RoutingRule};
 
 use crate::error::{AppError, Result};
 use std::fs;
@@ -8,11 +8,22 @@ use std::path::{Path, PathBuf};
 
 pub const DEFAULT_FULL_CONFIG: &str = r#"# Vibemate configuration
 
-[server]
+[system]
+# Optional upstream HTTP/SOCKS proxy used for outbound provider requests
+proxy = "http://127.0.0.1:7890"
+
+[router]
 host = "127.0.0.1"
 port = 12345
-# Optional upstream HTTP/SOCKS proxy used for outbound provider requests
-proxy = "socks5://127.0.0.1:7890"
+default_provider = "openai-official"
+rules = [
+  # Route all GPT-4o requests through openai-official
+  #{ pattern = "gpt-4o*", provider = "openai-official" },
+  # Example: route Claude models to anthropic
+  #{ pattern = "claude-*", provider = "anthropic" },
+  # Example: rewrite models while routing
+  #{ pattern = "o1-mini", provider = "openrouter", model = "openai/o1-mini" }
+]
 
 [agents]
 # Show extra quotas (for example Codex additional_rate_limits) in `vibemate usage` and dashboard output
@@ -41,16 +52,6 @@ api_key = "sk-your-openai-api-key"
 #  "anthropic-version" = "2023-06-01"
 #}
 
-[routing]
-default_provider = "openai-official"
-rules = [
-  # Route all GPT-4o requests through openai-official
-  #{ pattern = "gpt-4o*", provider = "openai-official" },
-  # Example: route Claude models to anthropic
-  #{ pattern = "claude-*", provider = "anthropic" },
-  # Example: rewrite models while routing
-  #{ pattern = "o1-mini", provider = "openrouter", model = "openai/o1-mini" }
-]
 "#;
 
 pub fn ensure_config_initialized(path: &Path) -> Result<PathBuf> {
