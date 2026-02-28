@@ -50,7 +50,7 @@ pub async fn run(config: &AppConfig, options: UsageOptions) -> Result<()> {
     let mut raw_results = BTreeMap::new();
     let mut errors = Vec::new();
     let mut found_any_token = false;
-    let client = config.server.build_http_client()?;
+    let client = config.system.build_http_client()?;
 
     for agent_impl in registry.iter() {
         let agent_id = agent_impl.descriptor().id;

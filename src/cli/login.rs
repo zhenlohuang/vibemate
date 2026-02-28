@@ -19,7 +19,7 @@ pub async fn run(agent: &str, config: &AppConfig) -> Result<()> {
             agent: agent.to_string(),
             capability: "auth".to_string(),
         })?;
-    let client = config.server.build_http_client()?;
+    let client = config.system.build_http_client()?;
 
     println!(
         "Starting {} OAuth flow...",

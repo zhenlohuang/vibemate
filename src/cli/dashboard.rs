@@ -120,7 +120,7 @@ async fn collect_usage(config: &AppConfig, show_extra_quota: bool) -> UsageUpdat
     let registry = global_agent_registry();
     let mut usage = Vec::new();
     let mut errors = Vec::new();
-    let client = match config.server.build_http_client() {
+    let client = match config.system.build_http_client() {
         Ok(client) => client,
         Err(err) => {
             return UsageUpdate {
