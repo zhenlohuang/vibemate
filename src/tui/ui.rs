@@ -44,7 +44,7 @@ fn tab_line(app: &App) -> Line<'static> {
         ActivePage::Usage => 0,
         ActivePage::Proxy => 1,
     };
-    let tab_names = ["Usage", "Proxy"];
+    let tab_names = ["Usage", "API Proxy"];
 
     let mut spans = vec![];
 

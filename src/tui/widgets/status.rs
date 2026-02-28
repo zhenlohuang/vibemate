@@ -12,7 +12,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     };
 
     let text = Line::from(vec![
-        Span::raw("Proxy: "),
+        Span::raw("API Proxy: "),
         Span::styled(
             app.proxy_addr.clone(),
             Style::default().add_modifier(Modifier::BOLD),
