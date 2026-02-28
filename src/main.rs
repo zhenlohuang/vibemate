@@ -85,7 +85,7 @@ enum Commands {
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> Result<()> {
     let Cli {
         config: config_path,
         command,
@@ -114,7 +114,7 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
-    result.map_err(anyhow::Error::from)
+    result
 }
 
 fn init_tracing(dashboard_mode: bool) {
