@@ -6,20 +6,6 @@ use crate::error::{AppError, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const DEFAULT_CONFIG: &str = r#"[server]
-host = "127.0.0.1"
-port = 12345
-proxy = "socks5://127.0.0.1:7890"
-
-[agents]
-show_extra_quota = false
-usage_refresh_interval_secs = 300
-
-[routing]
-default_provider = "openai-official"
-rules = []
-"#;
-
 pub const DEFAULT_FULL_CONFIG: &str = r#"# Vibemate configuration
 
 [server]
@@ -67,7 +53,7 @@ rules = [
 ]
 "#;
 
-pub fn load_config(path: &Path) -> Result<AppConfig> {
+pub fn ensure_config_initialized(path: &Path) -> Result<PathBuf> {
     ensure_vibemate_dir()?;
 
     let resolved_path = expand_tilde(path);
@@ -76,9 +62,14 @@ pub fn load_config(path: &Path) -> Result<AppConfig> {
     }
 
     if !resolved_path.exists() {
-        fs::write(&resolved_path, DEFAULT_CONFIG)?;
+        fs::write(&resolved_path, DEFAULT_FULL_CONFIG)?;
     }
 
+    Ok(resolved_path)
+}
+
+pub fn load_config(path: &Path) -> Result<AppConfig> {
+    let resolved_path = ensure_config_initialized(path)?;
     let raw = fs::read_to_string(&resolved_path)?;
     let config = toml::from_str::<AppConfig>(&raw)?;
     Ok(config)

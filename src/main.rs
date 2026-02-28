@@ -7,7 +7,7 @@ mod proxy;
 mod tui;
 
 use clap::{Parser, Subcommand};
-use config::load_config;
+use config::{ensure_config_initialized, load_config};
 use std::path::PathBuf;
 use tracing_subscriber::EnvFilter;
 
@@ -93,6 +93,10 @@ async fn main() -> anyhow::Result<()> {
 
     let is_dashboard = matches!(command, Commands::Dashboard);
     init_tracing(is_dashboard);
+
+    if !matches!(command, Commands::Config { init: true }) {
+        ensure_config_initialized(&config_path)?;
+    }
 
     let result: Result<()> = match command {
         Commands::Config { init } => cli::config::run(init, &config_path),
