@@ -171,7 +171,7 @@ fn print_usage_table(items: &[UsageInfo], show_extra_quota: bool) {
         } else {
             item.display_name.as_str()
         };
-        println!("\nAgent: {} (plan: {})", display_name, plan);
+        println!("\n{} (plan: {})", display_name, plan);
         let windows: Vec<_> = item
             .windows
             .iter()
