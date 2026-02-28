@@ -1,30 +1,20 @@
 use std::sync::Arc;
 
-use axum::routing::post;
 use axum::Router;
+use axum::routing::post;
 use tokio::sync::broadcast;
 use tower_http::cors::CorsLayer;
 
 use crate::config::AppConfig;
 use crate::error::{AppError, Result};
 use crate::provider::ProviderRegistry;
+use crate::proxy::RequestLog;
 use crate::proxy::handler::{self, ProxyState};
 use crate::proxy::middleware::apply_middleware;
 use crate::proxy::router::ModelRouter;
-use crate::proxy::RequestLog;
 
 pub async fn start(config: &AppConfig, log_tx: broadcast::Sender<RequestLog>) -> Result<()> {
-    let mut client_builder = reqwest::Client::builder();
-
-    if let Some(proxy) = &config.server.proxy {
-        let proxy_config = reqwest::Proxy::all(proxy)
-            .map_err(|e| AppError::Config(format!("Invalid network proxy URL '{proxy}': {e}")))?;
-        client_builder = client_builder.proxy(proxy_config);
-    }
-
-    let http_client = client_builder
-        .build()
-        .map_err(|e| AppError::ProxyServer(format!("Failed to build HTTP client: {e}")))?;
+    let http_client = config.server.build_http_client()?;
 
     let state = Arc::new(ProxyState {
         provider_registry: ProviderRegistry::from_config(config),

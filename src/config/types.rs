@@ -51,6 +51,23 @@ impl Default for ServerConfig {
     }
 }
 
+impl ServerConfig {
+    pub fn build_http_client(&self) -> crate::error::Result<reqwest::Client> {
+        let mut builder = reqwest::Client::builder();
+        if let Some(proxy_url) = &self.proxy {
+            let proxy_config = reqwest::Proxy::all(proxy_url).map_err(|e| {
+                crate::error::AppError::Config(format!(
+                    "Invalid network proxy URL '{proxy_url}': {e}"
+                ))
+            })?;
+            builder = builder.proxy(proxy_config);
+        }
+        builder.build().map_err(|e| {
+            crate::error::AppError::Config(format!("Failed to build HTTP client: {e}"))
+        })
+    }
+}
+
 #[derive(Debug, Deserialize, Clone)]
 #[serde(default)]
 pub struct AgentsConfig {

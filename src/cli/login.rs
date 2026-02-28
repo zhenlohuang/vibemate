@@ -2,7 +2,7 @@ use crate::agent::global_agent_registry;
 use crate::config::AppConfig;
 use crate::error::{AppError, Result};
 
-pub async fn run(agent: &str, _config: &AppConfig) -> Result<()> {
+pub async fn run(agent: &str, config: &AppConfig) -> Result<()> {
     let registry = global_agent_registry();
     let agent_impl = registry.get(agent).ok_or_else(|| {
         let supported = registry
@@ -19,12 +19,13 @@ pub async fn run(agent: &str, _config: &AppConfig) -> Result<()> {
             agent: agent.to_string(),
             capability: "auth".to_string(),
         })?;
+    let client = config.server.build_http_client()?;
 
     println!(
         "Starting {} OAuth flow...",
         agent_impl.descriptor().display_name
     );
-    auth.login().await?;
+    auth.login(&client).await?;
     println!("{} login successful.", agent_impl.descriptor().display_name);
 
     Ok(())
