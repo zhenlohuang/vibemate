@@ -381,8 +381,8 @@ impl AgentUsageCapability for CodexAgent {
 
     fn process_quota_name(&self, quota_name: &str) -> String {
         const DISPLAY_NAME_MAP: [(&str, &str); 4] = [
-            ("five-hour", "5 hour usage limit"),
-            ("seven-day", "Weekly usage limit"),
+            ("five-hour", "Session"),
+            ("seven-day", "Weekly"),
             ("code-review-seven-day", "Code Review"),
             ("code-review", "Code Review"),
         ];

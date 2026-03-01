@@ -342,7 +342,7 @@ mod tests {
 
         let output = render_static_lines(&usage, 100, "No usage data available.").join("\n");
         assert!(output.contains("Codex (plus)"));
-        assert!(output.contains("5 hour usage limit"));
+        assert!(output.contains("Session"));
         assert!(output.contains("60% used"));
     }
 

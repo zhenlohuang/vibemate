@@ -445,7 +445,7 @@ mod tests {
                     ..Default::default()
                 }
             ),
-            "5 hour usage limit"
+            "Session"
         );
         assert_eq!(
             derive_display_name(
