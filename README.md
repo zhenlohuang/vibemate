@@ -98,7 +98,7 @@ VibeMate initializes an empty config file by default at:
 
 ```toml
 [system]
-proxy = "http://127.0.0.1:7890"
+# proxy = "http://127.0.0.1:7890"
 
 [router]
 host = "127.0.0.1"
@@ -119,7 +119,7 @@ api_key = "sk-your-openai-api-key"
 ## Multi-provider routing example
 ```toml
 [system]
-proxy = "http://127.0.0.1:7890"
+# proxy = "http://127.0.0.1:7890"
 
 [router]
 host = "127.0.0.1"
