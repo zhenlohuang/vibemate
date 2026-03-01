@@ -224,7 +224,12 @@ fn render_window(
     window: &UsageWindow,
 ) {
     let percent = window.utilization_pct.clamp(0.0, 100.0).round() as u16;
-    let title_text = derive_display_name(agent_name, window);
+    let base_title = derive_display_name(agent_name, window);
+    let title_text = if window.is_extra {
+        format!("Extra: {base_title}")
+    } else {
+        base_title
+    };
 
     // Line 1: Bold title
     let name_line = Paragraph::new(Line::from(Span::styled(
@@ -337,7 +342,7 @@ mod tests {
 
         let output = render_static_lines(&usage, 100, "No usage data available.").join("\n");
         assert!(output.contains("Codex (plus)"));
-        assert!(output.contains("5h limit"));
+        assert!(output.contains("5 hour usage limit"));
         assert!(output.contains("60% used"));
     }
 
@@ -365,5 +370,25 @@ mod tests {
 
         let output = render_static_lines(&usage, 100, "No usage data available.").join("\n");
         assert!(!output.contains("█ █"));
+    }
+
+    #[test]
+    fn static_render_prefixes_extra_quota_with_extra_label() {
+        let usage = vec![UsageInfo {
+            agent_name: "claude-code".to_string(),
+            display_name: "Claude Code".to_string(),
+            plan: None,
+            windows: vec![UsageWindow {
+                name: "sonnet-4".to_string(),
+                utilization_pct: 10.0,
+                resets_at: None,
+                is_extra: true,
+                source_limit_name: None,
+            }],
+            extra_usage: None,
+        }];
+
+        let output = render_static_lines(&usage, 100, "No usage data available.").join("\n");
+        assert!(output.contains("Extra: sonnet-4"));
     }
 }

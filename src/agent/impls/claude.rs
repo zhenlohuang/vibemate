@@ -565,6 +565,16 @@ impl AgentUsageCapability for ClaudeAgent {
     async fn get_usage_raw(&self, token: &AgentToken, client: &reqwest::Client) -> Result<Value> {
         get_usage_raw(token, client).await
     }
+
+    fn process_quota_name(&self, quota_name: &str) -> String {
+        const DISPLAY_NAME_MAP: [(&str, &str); 2] =
+            [("five-hour", "Session"), ("seven-day", "Weekly")];
+        DISPLAY_NAME_MAP
+            .iter()
+            .find_map(|(name, display_name)| (*name == quota_name).then_some(*display_name))
+            .unwrap_or(quota_name)
+            .to_string()
+    }
 }
 
 #[cfg(test)]

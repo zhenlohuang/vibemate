@@ -4,7 +4,7 @@ use serde_json::Value;
 use crate::error::Result;
 
 use super::auth::token::AgentToken;
-use super::types::{AgentDescriptor, UsageInfo, UsageWindow, normalize_quota_display_name};
+use super::types::{AgentDescriptor, UsageInfo, UsageWindow};
 
 pub trait AgentIdentity: Send + Sync {
     fn descriptor(&self) -> &'static AgentDescriptor;
@@ -26,12 +26,16 @@ pub trait AgentUsageCapability: Send + Sync {
     async fn get_usage(&self, token: &AgentToken, client: &reqwest::Client) -> Result<UsageInfo>;
     async fn get_usage_raw(&self, token: &AgentToken, client: &reqwest::Client) -> Result<Value>;
 
+    fn process_quota_name(&self, quota_name: &str) -> String {
+        quota_name.to_string()
+    }
+
     fn quota_name(&self, window: &UsageWindow) -> String {
         window.name.clone()
     }
 
     fn display_quota_name(&self, window: &UsageWindow) -> String {
-        normalize_quota_display_name(&window.name)
+        self.process_quota_name(&window.name)
     }
 }
 

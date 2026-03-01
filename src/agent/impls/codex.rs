@@ -11,7 +11,7 @@ use crate::agent::auth::pkce::{generate_challenge, generate_state, generate_veri
 use crate::agent::auth::token::{AgentToken, auth_file_path, load_token, save_token};
 use crate::agent::{
     Agent, AgentAuthCapability, AgentDescriptor, AgentIdentity, AgentUsageCapability, UsageInfo,
-    UsageWindow, normalize_quota_display_name,
+    UsageWindow,
 };
 use crate::error::{AppError, Result};
 
@@ -379,6 +379,20 @@ impl AgentUsageCapability for CodexAgent {
         get_usage_raw(token, client).await
     }
 
+    fn process_quota_name(&self, quota_name: &str) -> String {
+        const DISPLAY_NAME_MAP: [(&str, &str); 4] = [
+            ("five-hour", "5 hour usage limit"),
+            ("seven-day", "Weekly usage limit"),
+            ("code-review-seven-day", "Code Review"),
+            ("code-review", "Code Review"),
+        ];
+        DISPLAY_NAME_MAP
+            .iter()
+            .find_map(|(name, display_name)| (*name == quota_name).then_some(*display_name))
+            .unwrap_or(quota_name)
+            .to_string()
+    }
+
     fn quota_name(&self, window: &UsageWindow) -> String {
         if window.is_extra {
             return window
@@ -387,26 +401,6 @@ impl AgentUsageCapability for CodexAgent {
                 .unwrap_or_else(|| "additional_rate_limits".to_string());
         }
         window.name.clone()
-    }
-
-    fn display_quota_name(&self, window: &UsageWindow) -> String {
-        if window.is_extra {
-            let limit_name = window
-                .source_limit_name
-                .clone()
-                .unwrap_or_else(|| "additional_rate_limits".to_string());
-            if window.name.ends_with("-five-hour") {
-                return format!("{limit_name}(5h)");
-            }
-            if window.name.ends_with("-seven-day") {
-                return format!("{limit_name}(7d)");
-            }
-            if window.name.ends_with("-seven-day-opus") {
-                return format!("{limit_name}(opus 7d)");
-            }
-            return limit_name;
-        }
-        normalize_quota_display_name(&window.name)
     }
 }
 

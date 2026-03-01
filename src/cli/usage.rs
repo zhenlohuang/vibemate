@@ -293,7 +293,7 @@ pub fn derive_display_name(agent_name: &str, window: &UsageWindow) -> String {
         return agent.display_quota_name(window);
     }
 
-    normalize_quota_display_name(&window.name)
+    window.name.to_string()
 }
 
 fn lookup_usage_capability(agent_name: &str) -> Option<&'static dyn AgentUsageCapability> {
@@ -321,10 +321,6 @@ pub fn should_display_window(window: &UsageWindow) -> bool {
         return should_display_extra_quota(window);
     }
     should_display_quota(window)
-}
-
-fn normalize_quota_display_name(quota_name: &str) -> String {
-    crate::agent::normalize_quota_display_name(quota_name)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -435,34 +431,65 @@ mod tests {
     use crate::agent::{UsageInfo, UsageWindow};
 
     use super::{
-        derive_display_name, derive_quota_name, filter_extra_windows, normalize_quota_display_name,
-        to_usage_json_agent, validate_target_agent,
+        derive_display_name, derive_quota_name, filter_extra_windows, to_usage_json_agent,
+        validate_target_agent,
     };
 
     #[test]
-    fn normalizes_common_quota_names() {
-        assert_eq!(normalize_quota_display_name("five-hour"), "5h limit");
-        assert_eq!(normalize_quota_display_name("seven-day"), "7d limit");
-        assert_eq!(normalize_quota_display_name("seven-day-opus"), "opus (7d)");
+    fn codex_display_names_are_derived_from_codex_agent_impl() {
+        assert_eq!(
+            derive_display_name(
+                "codex",
+                &UsageWindow {
+                    name: "five-hour".to_string(),
+                    ..Default::default()
+                }
+            ),
+            "5 hour usage limit"
+        );
+        assert_eq!(
+            derive_display_name(
+                "codex",
+                &UsageWindow {
+                    name: "gpt-5-3-codex-spark-five-hour".to_string(),
+                    ..Default::default()
+                }
+            ),
+            "gpt-5-3-codex-spark-five-hour"
+        );
+        assert_eq!(
+            derive_display_name(
+                "codex",
+                &UsageWindow {
+                    name: "code-review-seven-day".to_string(),
+                    ..Default::default()
+                }
+            ),
+            "Code Review"
+        );
     }
 
     #[test]
-    fn keeps_model_specific_quota_context() {
+    fn claude_display_names_are_derived_from_claude_agent_impl() {
         assert_eq!(
-            normalize_quota_display_name("gpt-5-3-codex-spark-five-hour"),
-            "gpt-5-3-codex-spark (5h)"
+            derive_display_name(
+                "claude-code",
+                &UsageWindow {
+                    name: "seven-day".to_string(),
+                    ..Default::default()
+                }
+            ),
+            "Weekly"
         );
         assert_eq!(
-            normalize_quota_display_name("code-review-seven-day"),
-            "Code Review"
-        );
-        assert_eq!(
-            normalize_quota_display_name("gpt-5-3-codex-spark-seven-day"),
-            "gpt-5-3-codex-spark (7d)"
-        );
-        assert_eq!(
-            normalize_quota_display_name("gpt-5-3-codex-spark-seven-day-opus"),
-            "gpt-5-3-codex-spark opus (7d)"
+            derive_display_name(
+                "claude-code",
+                &UsageWindow {
+                    name: "sonnet-4".to_string(),
+                    ..Default::default()
+                }
+            ),
+            "sonnet-4"
         );
     }
 
@@ -497,11 +524,11 @@ mod tests {
         assert_eq!(derive_quota_name("codex", &codex_base), "five-hour");
         assert_eq!(
             derive_display_name("codex", &codex_extra_session),
-            "GPT-5.3-Codex-Spark(5h)"
+            "gpt-5-3-codex-spark-five-hour"
         );
         assert_eq!(
             derive_display_name("codex", &codex_extra_week),
-            "GPT-5.3-Codex-Spark(7d)"
+            "gpt-5-3-codex-spark-seven-day"
         );
     }
 
