@@ -1,6 +1,6 @@
-# Vibemate - Your Vibe Coding Mate
+# VibeMate - Your Vibe Coding Mate
 
-Vibemate is a local CLI companion for coding agents, with OAuth login, usage tracking, and a unified model router.
+VibeMate is a local CLI companion for coding agents, with OAuth login, usage tracking, and a unified model router.
 
 ## Features
 1. Agent OAuth login
@@ -75,7 +75,7 @@ Options:
 ![Usage screenshot](./docs/screenshots/usage.png)
 
 ## Configuration
-Vibemate initializes an empty config file by default at:
+VibeMate initializes an empty config file by default at:
 
 ```text
 ~/.vibemate/config.toml
@@ -124,7 +124,7 @@ api_key = "sk-your-openai-api-key"
 [providers.openrouter]
 base_url = "https://openrouter.ai/api/v1"
 api_key = "sk-or-v1-your-openrouter-key"
-headers = { "HTTP-Referer" = "https://example.com", "X-Title" = "Vibemate" }
+headers = { "HTTP-Referer" = "https://example.com", "X-Title" = "VibeMate" }
 ```
 
 Detailed configuration guide: [docs/configuration.md](./docs/configuration.md)

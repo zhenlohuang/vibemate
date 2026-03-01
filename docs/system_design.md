@@ -1,8 +1,8 @@
-# Vibemate System Design Document
+# VibeMate System Design Document
 
 ## 1. Project Overview & Scope
 
-Vibemate is a Rust CLI tool that acts as a local AI model router and usage dashboard for coding agents. It is inspired by [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) (Go), but intentionally limited in scope to two coding agents: **Codex** (OpenAI) and **Claude Code** (Anthropic).
+VibeMate is a Rust CLI tool that acts as a local AI model router and usage dashboard for coding agents. It is inspired by [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) (Go), but intentionally limited in scope to two coding agents: **Codex** (OpenAI) and **Claude Code** (Anthropic).
 
 ### Goals
 
@@ -27,7 +27,7 @@ Vibemate is a Rust CLI tool that acts as a local AI model router and usage dashb
 
 ## 2. Project Structure
 
-Vibemate is a **single Cargo crate** (not a workspace — a workspace is overkill for a CLI tool of this scope).
+VibeMate is a **single Cargo crate** (not a workspace — a workspace is overkill for a CLI tool of this scope).
 
 ```
 vibemate/
@@ -88,7 +88,7 @@ vibemate/
 
 ## 3. Architecture Overview
 
-Vibemate follows a layered architecture where each layer has well-defined responsibilities and dependencies flow downward.
+VibeMate follows a layered architecture where each layer has well-defined responsibilities and dependencies flow downward.
 
 ```
 +------------------+
@@ -408,7 +408,7 @@ headers = { x-api-key = "sk-ant-...", anthropic-version = "2023-06-01" }
 
 ### Endpoints
 
-| Vibemate Endpoint | Format | Upstream Path |
+| VibeMate Endpoint | Format | Upstream Path |
 |---|---|---|
 | `POST /api/v1/chat/completions` | OpenAI | `{base_url}/v1/chat/completions` |
 | `POST /api/v1/responses` | OpenAI | `{base_url}/v1/responses` |

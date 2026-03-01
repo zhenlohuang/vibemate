@@ -6,7 +6,7 @@ use crate::error::{AppError, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub const DEFAULT_FULL_CONFIG: &str = r#"# Vibemate configuration
+pub const DEFAULT_FULL_CONFIG: &str = r#"# VibeMate configuration
 
 [system]
 # Optional upstream HTTP/SOCKS proxy used for outbound provider requests
@@ -42,7 +42,7 @@ api_key = "sk-your-openai-api-key"
 #api_key = "sk-or-v1-your-openrouter-key"
 #headers = {
 #  "HTTP-Referer" = "https://example.com",
-#  "X-Title" = "Vibemate"
+#  "X-Title" = "VibeMate"
 #}
 
 #[providers.anthropic]

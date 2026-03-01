@@ -1,4 +1,4 @@
-# Vibemate Configuration
+# VibeMate Configuration
 
 ## Configuration directory layout
 Default configuration directory:
@@ -18,7 +18,7 @@ Typical structure:
 ```
 
 What each file is for:
-- `config.toml`: main Vibemate config (system, router, providers, agent settings).
+- `config.toml`: main VibeMate config (system, router, providers, agent settings).
 - `auth/codex_auth.json`: OAuth token cache for Codex, created after `vibemate login codex`.
 - `auth/claude_auth.json`: OAuth token cache for Claude Code, created after `vibemate login claude-code`.
 
@@ -42,7 +42,7 @@ What each file is for:
 
 `[providers.<name>]`
 - `base_url`: upstream API base URL.
-- `api_key`: optional API key; Vibemate auto-adds `Authorization: Bearer <api_key>` if no authorization header already exists.
+- `api_key`: optional API key; VibeMate auto-adds `Authorization: Bearer <api_key>` if no authorization header already exists.
 - `headers`: optional custom request headers.
 
 ## Notes

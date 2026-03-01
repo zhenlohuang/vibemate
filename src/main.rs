@@ -71,7 +71,7 @@ enum Commands {
     },
     #[command(
         about = "Run the local model router server",
-        long_about = "Start the Vibemate model router server using the configured host and port."
+        long_about = "Start the VibeMate model router server using the configured host and port."
     )]
     Router,
     #[command(

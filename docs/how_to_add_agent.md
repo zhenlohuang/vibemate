@@ -1,6 +1,6 @@
 # How to Add an Agent
 
-This guide walks through adding a new agent to Vibemate. An agent represents an AI coding tool (e.g., Claude Code, Codex) and provides OAuth authentication and usage tracking.
+This guide walks through adding a new agent to VibeMate. An agent represents an AI coding tool (e.g., Claude Code, Codex) and provides OAuth authentication and usage tracking.
 
 ## Overview
 
