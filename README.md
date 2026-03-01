@@ -71,6 +71,9 @@ Options:
           Print version
 ```
 
+## Usage Screenshot
+![Usage screenshot](./docs/screenshots/usage.png)
+
 ## Configuration
 Vibemate initializes an empty config file by default at:
 
