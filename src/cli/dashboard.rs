@@ -1,4 +1,5 @@
 use std::io;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use crossterm::event::{self, Event, KeyCode};
@@ -15,12 +16,25 @@ use crate::agent::{UsageInfo, global_agent_registry};
 use crate::config::AppConfig;
 use crate::error::Result;
 use crate::model_router;
+use crate::model_router::RequestLog;
+use crate::model_router::logging::{FileLogTailer, resolve_log_path};
 use crate::tui::app::App;
 use crate::tui::ui;
 
 struct UsageUpdate {
     usage: Vec<UsageInfo>,
     message: Option<String>,
+}
+
+enum LogEvent {
+    Entry(RequestLog),
+    Note(Option<String>),
+}
+
+#[derive(Debug, Clone)]
+enum DashboardLogMode {
+    Memory,
+    File { path: PathBuf, max_files: u32 },
 }
 
 pub async fn run(config: &AppConfig) -> Result<()> {
@@ -43,12 +57,31 @@ async fn run_dashboard_loop(
     config: &AppConfig,
     terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
 ) -> Result<()> {
-    let (log_tx, mut log_rx) = broadcast::channel(1024);
+    let log_mode = dashboard_log_mode(config);
+    let (log_event_tx, mut log_event_rx) = mpsc::channel::<LogEvent>(1024);
     let (usage_tx, mut usage_rx) = mpsc::channel::<UsageUpdate>(8);
 
+    let mut log_task = match &log_mode {
+        DashboardLogMode::Memory => {
+            let (memory_log_tx, memory_log_rx) = broadcast::channel(1024);
+            let tx = log_event_tx.clone();
+            let task = tokio::spawn(async move { bridge_memory_logs(memory_log_rx, tx).await });
+            (Some(memory_log_tx), task)
+        }
+        DashboardLogMode::File { path, max_files } => {
+            let tx = log_event_tx.clone();
+            let path = path.clone();
+            let max_files = *max_files;
+            let task = tokio::spawn(async move { tail_file_logs(path, max_files, tx).await });
+            (None, task)
+        }
+    };
+
     let router_config = config.clone();
-    let router_task =
-        tokio::spawn(async move { model_router::server::start(&router_config, log_tx).await });
+    let memory_log_tx = log_task.0.take();
+    let mut router_task = Some(tokio::spawn(async move {
+        model_router::server::start(&router_config, memory_log_tx).await
+    }));
 
     let usage_task_tx = usage_tx.clone();
     let usage_config = config.clone();
@@ -69,10 +102,23 @@ async fn run_dashboard_loop(
         config.router.host, config.router.port
     ));
     app.router_running = true;
+    app.log_source = match &log_mode {
+        DashboardLogMode::Memory => "memory".to_string(),
+        DashboardLogMode::File { path, .. } => format!("file {}", path.display()),
+    };
+    app.log_source_note = match &log_mode {
+        DashboardLogMode::Memory => Some("Realtime logs from embedded router process".to_string()),
+        DashboardLogMode::File { path, .. } => {
+            Some(format!("Reading router logs from {}", path.display()))
+        }
+    };
 
     loop {
-        while let Ok(log) = log_rx.try_recv() {
-            app.push_log(log);
+        while let Ok(event) = log_event_rx.try_recv() {
+            match event {
+                LogEvent::Entry(log) => app.push_log(log),
+                LogEvent::Note(note) => app.log_source_note = note,
+            }
         }
 
         while let Ok(update) = usage_rx.try_recv() {
@@ -80,9 +126,31 @@ async fn run_dashboard_loop(
             app.status_message = update.message;
         }
 
-        if router_task.is_finished() {
-            app.router_running = false;
-            app.status_message = Some("Router task stopped unexpectedly".to_string());
+        if let Some(task) = router_task.as_mut() {
+            if task.is_finished() {
+                app.router_running = false;
+                let result = task.await;
+                router_task = None;
+
+                let detail = match result {
+                    Ok(Ok(())) => "router task stopped".to_string(),
+                    Ok(Err(err)) => format!("router task error: {err}"),
+                    Err(err) => format!("router task join error: {err}"),
+                };
+
+                match &log_mode {
+                    DashboardLogMode::Memory => {
+                        app.log_source_note = Some(format!(
+                            "{detail}; no available log source (memory mode requires embedded router)"
+                        ));
+                    }
+                    DashboardLogMode::File { .. } => {
+                        app.log_source_note = Some(format!(
+                            "{detail}; continuing in file-tail mode for external router logs"
+                        ));
+                    }
+                }
+            }
         }
 
         terminal.draw(|frame| ui::render(frame, &app))?;
@@ -110,10 +178,153 @@ async fn run_dashboard_loop(
         }
     }
 
-    router_task.abort();
+    if let Some(task) = router_task.as_mut() {
+        task.abort();
+    }
     usage_task.abort();
+    log_task.1.abort();
 
     Ok(())
+}
+
+fn dashboard_log_mode(config: &AppConfig) -> DashboardLogMode {
+    if config.router.logging.enabled {
+        DashboardLogMode::File {
+            path: resolve_log_path(&config.router.logging.file_path),
+            max_files: config.router.logging.max_files_or_default(),
+        }
+    } else {
+        DashboardLogMode::Memory
+    }
+}
+
+async fn bridge_memory_logs(
+    mut memory_log_rx: broadcast::Receiver<RequestLog>,
+    log_event_tx: mpsc::Sender<LogEvent>,
+) {
+    loop {
+        match memory_log_rx.recv().await {
+            Ok(log) => {
+                if log_event_tx.send(LogEvent::Entry(log)).await.is_err() {
+                    break;
+                }
+            }
+            Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                let _ = log_event_tx
+                    .send(LogEvent::Note(Some(format!(
+                        "Skipped {skipped} in-memory logs due channel backpressure"
+                    ))))
+                    .await;
+            }
+            Err(broadcast::error::RecvError::Closed) => break,
+        }
+    }
+}
+
+async fn tail_file_logs(path: PathBuf, max_files: u32, log_event_tx: mpsc::Sender<LogEvent>) {
+    let mut tailer = FileLogTailer::new(path.clone(), max_files);
+    let history = match tailer.load_recent(1_000) {
+        Ok(items) => items,
+        Err(err) => {
+            let _ = log_event_tx
+                .send(LogEvent::Note(Some(format!(
+                    "Failed to load log history from {}: {err}",
+                    path.display()
+                ))))
+                .await;
+            Vec::new()
+        }
+    };
+
+    for log in history {
+        if log_event_tx.send(LogEvent::Entry(log)).await.is_err() {
+            return;
+        }
+    }
+
+    let mut last_note: Option<String> = None;
+    loop {
+        match tailer.poll() {
+            Ok(poll) => {
+                for log in poll.logs {
+                    if log_event_tx.send(LogEvent::Entry(log)).await.is_err() {
+                        return;
+                    }
+                }
+
+                let next_note = if poll.waiting_for_file {
+                    Some(format!("Waiting for router log file at {}", path.display()))
+                } else if tailer.total_parse_errors() > 0 {
+                    Some(format!(
+                        "Tailing {} (skipped {} malformed lines)",
+                        path.display(),
+                        tailer.total_parse_errors()
+                    ))
+                } else {
+                    None
+                };
+
+                if next_note != last_note {
+                    if log_event_tx
+                        .send(LogEvent::Note(next_note.clone()))
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
+                    last_note = next_note;
+                }
+            }
+            Err(err) => {
+                let next_note = Some(format!("Failed reading {}: {err}", path.display()));
+                if next_note != last_note {
+                    if log_event_tx
+                        .send(LogEvent::Note(next_note.clone()))
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
+                    last_note = next_note;
+                }
+            }
+        }
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DashboardLogMode, dashboard_log_mode};
+    use crate::config::AppConfig;
+
+    #[test]
+    fn dashboard_log_mode_uses_memory_when_disabled() {
+        let mut config = AppConfig::default();
+        config.router.logging.enabled = false;
+        let mode = dashboard_log_mode(&config);
+        assert!(matches!(mode, DashboardLogMode::Memory));
+    }
+
+    #[test]
+    fn dashboard_log_mode_uses_file_when_enabled() {
+        let mut config = AppConfig::default();
+        config.router.logging.enabled = true;
+        config.router.logging.file_path = "~/.vibemate/logs/custom.log".to_string();
+        let mode = dashboard_log_mode(&config);
+        match mode {
+            DashboardLogMode::File { path, max_files } => {
+                assert!(
+                    path.display()
+                        .to_string()
+                        .contains(".vibemate/logs/custom.log")
+                );
+                assert_eq!(max_files, 3);
+            }
+            DashboardLogMode::Memory => panic!("expected file mode"),
+        }
+    }
 }
 
 async fn collect_usage(config: &AppConfig, show_extra_quota: bool) -> UsageUpdate {
@@ -171,7 +382,7 @@ async fn collect_usage(config: &AppConfig, show_extra_quota: bool) -> UsageUpdat
     }
 
     let message = if errors.is_empty() {
-        Some("q/esc:quit  r:refresh  Tab:switch page  j/k:scroll".to_string())
+        None
     } else {
         Some(errors.join(" | "))
     };

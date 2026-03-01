@@ -7,20 +7,24 @@ use tower_http::cors::CorsLayer;
 
 use crate::config::AppConfig;
 use crate::error::{AppError, Result};
-use crate::model_router::RequestLog;
 use crate::model_router::handler::{self, RouterState};
+use crate::model_router::logging::{RouterLogSink, build_file_writer};
 use crate::model_router::middleware::apply_middleware;
 use crate::model_router::router::ModelRouter;
 use crate::provider::ProviderRegistry;
 
-pub async fn start(config: &AppConfig, log_tx: broadcast::Sender<RequestLog>) -> Result<()> {
+pub async fn start(
+    config: &AppConfig,
+    memory_log_tx: Option<broadcast::Sender<crate::model_router::RequestLog>>,
+) -> Result<()> {
     let http_client = config.system.build_http_client()?;
+    let file_writer = build_file_writer(&config.router.logging)?;
 
     let state = Arc::new(RouterState {
         provider_registry: ProviderRegistry::from_config(config),
         model_router: ModelRouter::from_config(&config.router),
         http_client,
-        log_tx,
+        log_sink: RouterLogSink::new(memory_log_tx, file_writer),
     });
 
     let app = Router::new()

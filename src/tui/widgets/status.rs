@@ -11,7 +11,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         Color::Red
     };
 
-    let text = Line::from(vec![
+    let header = Line::from(vec![
         Span::raw("API Proxy: "),
         Span::styled(
             app.router_addr.clone(),
@@ -25,6 +25,23 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         Span::raw("]"),
     ]);
 
-    let widget = Paragraph::new(text).block(Block::default().borders(Borders::ALL).title("Status"));
+    let log_line = Line::from(vec![
+        Span::raw("Log: "),
+        Span::styled(
+            app.log_source.clone(),
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+    ]);
+
+    let mut lines = vec![header, log_line];
+    if let Some(note) = &app.log_source_note {
+        lines.push(Line::from(Span::styled(
+            note.clone(),
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+
+    let widget =
+        Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title("Status"));
     frame.render_widget(widget, area);
 }

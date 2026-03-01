@@ -8,7 +8,11 @@ pub fn render(frame: &mut Frame, app: &App) {
     let area = frame.area();
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(8)])
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(8),
+            Constraint::Length(1),
+        ])
         .split(area);
 
     // Tab bar (centered, custom style similar to screenshot)
@@ -30,13 +34,18 @@ pub fn render(frame: &mut Frame, app: &App) {
         ActivePage::Router => {
             let body = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([Constraint::Length(3), Constraint::Min(5)])
+                .constraints([Constraint::Length(6), Constraint::Min(5)])
                 .split(chunks[1]);
             status::render(frame, body[0], app);
             let log_items: Vec<_> = app.logs.iter().cloned().collect();
             logs::render(frame, body[1], &log_items, app.log_scroll);
         }
     }
+
+    let footer = Paragraph::new(footer_line(app))
+        .alignment(Alignment::Left)
+        .block(Block::default().borders(Borders::TOP));
+    frame.render_widget(footer, chunks[2]);
 }
 
 fn tab_line(app: &App) -> Line<'static> {
@@ -63,11 +72,25 @@ fn tab_line(app: &App) -> Line<'static> {
         spans.push(Span::styled(format!(" {name} "), style));
     }
 
-    spans.push(Span::raw(" "));
-    spans.push(Span::styled(
-        "(Tab to cycle)",
-        Style::default().fg(Color::DarkGray),
-    ));
+    Line::from(spans)
+}
+
+fn footer_line(app: &App) -> Line<'static> {
+    let mut spans = vec![
+        Span::styled("Esc:quit", Style::default().fg(Color::White)),
+        Span::styled(" | ", Style::default().fg(Color::DarkGray)),
+        Span::styled("Tab:switch page", Style::default().fg(Color::White)),
+        Span::styled(" | ", Style::default().fg(Color::DarkGray)),
+        Span::styled("j/k:scroll", Style::default().fg(Color::White)),
+    ];
+
+    if let Some(message) = &app.status_message {
+        spans.push(Span::raw("  |  "));
+        spans.push(Span::styled(
+            message.clone(),
+            Style::default().fg(Color::Gray),
+        ));
+    }
 
     Line::from(spans)
 }

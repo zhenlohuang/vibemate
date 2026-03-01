@@ -1,6 +1,6 @@
 mod types;
 
-pub use types::{AppConfig, RouterConfig, RoutingRule};
+pub use types::{AppConfig, RouterConfig, RouterLoggingConfig, RoutingRule};
 
 use crate::error::{AppError, Result};
 use std::fs;
@@ -24,6 +24,13 @@ rules = [
   # Example: rewrite models while routing
   #{ pattern = "o1-mini", provider = "openrouter", model = "openai/o1-mini" }
 ]
+
+[router.logging]
+# Persist router access logs in JSON Lines format.
+enabled = false
+file_path = "~/.vibemate/logs/router-access.log"
+max_file_size_mb = 20
+max_files = 3
 
 [agents]
 # Show extra quotas (for example Codex additional_rate_limits) in `vibemate usage` and dashboard output

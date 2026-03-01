@@ -139,6 +139,7 @@ pub struct RouterConfig {
     pub port: u16,
     pub default_provider: String,
     pub rules: Vec<RoutingRule>,
+    pub logging: RouterLoggingConfig,
 }
 
 impl Default for RouterConfig {
@@ -148,7 +149,38 @@ impl Default for RouterConfig {
             port: 12_345,
             default_provider: "openai-official".to_string(),
             rules: Vec::new(),
+            logging: RouterLoggingConfig::default(),
         }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(default, deny_unknown_fields)]
+pub struct RouterLoggingConfig {
+    pub enabled: bool,
+    pub file_path: String,
+    pub max_file_size_mb: u64,
+    pub max_files: u32,
+}
+
+impl Default for RouterLoggingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            file_path: "~/.vibemate/logs/router-access.log".to_string(),
+            max_file_size_mb: 20,
+            max_files: 3,
+        }
+    }
+}
+
+impl RouterLoggingConfig {
+    pub fn max_file_size_bytes(&self) -> u64 {
+        self.max_file_size_mb.max(1) * 1024 * 1024
+    }
+
+    pub fn max_files_or_default(&self) -> u32 {
+        self.max_files.max(1)
     }
 }
 
@@ -164,7 +196,7 @@ pub struct RoutingRule {
 mod tests {
     use std::collections::HashMap;
 
-    use super::{SystemConfig, first_proxy_env_value, normalize_proxy_value};
+    use super::{AppConfig, SystemConfig, first_proxy_env_value, normalize_proxy_value};
 
     #[test]
     fn proxy_env_uses_expected_precedence() {
@@ -223,5 +255,54 @@ mod tests {
             Some("http://127.0.0.1:7890")
         );
         assert_eq!(normalize_proxy_value(" \t "), None);
+    }
+
+    #[test]
+    fn app_config_accepts_router_without_logging_section() {
+        let value = r#"
+            [router]
+            host = "127.0.0.1"
+            port = 12345
+            default_provider = "openai-official"
+            rules = []
+
+            [providers.openai-official]
+            base_url = "https://api.openai.com/v1"
+        "#;
+
+        let parsed: AppConfig = toml::from_str(value).expect("config should parse");
+        assert!(!parsed.router.logging.enabled);
+        assert_eq!(
+            parsed.router.logging.file_path,
+            "~/.vibemate/logs/router-access.log"
+        );
+        assert_eq!(parsed.router.logging.max_file_size_mb, 20);
+        assert_eq!(parsed.router.logging.max_files, 3);
+    }
+
+    #[test]
+    fn app_config_supports_custom_router_logging_section() {
+        let value = r#"
+            [router]
+            host = "127.0.0.1"
+            port = 12345
+            default_provider = "openai-official"
+            rules = []
+
+            [router.logging]
+            enabled = true
+            file_path = "/tmp/router.log"
+            max_file_size_mb = 7
+            max_files = 5
+
+            [providers.openai-official]
+            base_url = "https://api.openai.com/v1"
+        "#;
+
+        let parsed: AppConfig = toml::from_str(value).expect("config should parse");
+        assert!(parsed.router.logging.enabled);
+        assert_eq!(parsed.router.logging.file_path, "/tmp/router.log");
+        assert_eq!(parsed.router.logging.max_file_size_mb, 7);
+        assert_eq!(parsed.router.logging.max_files, 5);
     }
 }

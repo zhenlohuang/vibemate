@@ -36,6 +36,12 @@ What each file is for:
 - `provider`: target provider name.
 - `model`: optional rewritten model name.
 
+`[router.logging]`
+- `enabled`: whether to persist router access logs.
+- `file_path`: access log file path (JSON Lines). Default: `~/.vibemate/logs/router-access.log`.
+- `max_file_size_mb`: rotate when file exceeds this size.
+- `max_files`: number of rotated files to retain (`.1`, `.2`, ...).
+
 `[agents]`
 - `show_extra_quota`: show extra quota windows in usage/dashboard.
 - `usage_refresh_interval_secs`: usage refresh interval in dashboard.
@@ -49,3 +55,6 @@ What each file is for:
 - Keep `~/.vibemate/auth/*.json` private because they contain OAuth tokens.
 - If provider auth fails, verify both the provider section and matching routing rule names.
 - Proxy precedence is: environment proxy variables first (`https_proxy`, `all_proxy`, `http_proxy`, and uppercase forms), then `[system].proxy`.
+- Dashboard log source behavior:
+  - `router.logging.enabled = false`: dashboard router log panel reads embedded in-memory logs only.
+  - `router.logging.enabled = true`: dashboard reads router logs from `file_path` (works with external `vibemate router` too).

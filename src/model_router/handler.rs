@@ -6,10 +6,10 @@ use axum::extract::State;
 use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde_json::{Value, json};
-use tokio::sync::broadcast;
 
 use crate::error::AppError;
 use crate::model_router::RequestLog;
+use crate::model_router::logging::RouterLogSink;
 use crate::model_router::router::ModelRouter;
 use crate::model_router::stream::relay_sse_stream;
 use crate::provider::ProviderRegistry;
@@ -19,7 +19,7 @@ pub struct RouterState {
     pub provider_registry: ProviderRegistry,
     pub model_router: ModelRouter,
     pub http_client: reqwest::Client,
-    pub log_tx: broadcast::Sender<RequestLog>,
+    pub log_sink: RouterLogSink,
 }
 
 pub async fn chat_completions(
@@ -61,23 +61,58 @@ async fn forward_request(
     body: Bytes,
 ) -> Response {
     let started = Instant::now();
+    let request_id = headers
+        .get("x-request-id")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+
+    let mut original_model = String::new();
+    let mut routed_model = String::new();
+    let mut provider_name = "unknown".to_string();
 
     let mut body_json = match serde_json::from_slice::<Value>(&body) {
         Ok(v) => v,
         Err(err) => {
+            emit_log(
+                &state.log_sink,
+                request_path,
+                &request_id,
+                &original_model,
+                &routed_model,
+                &provider_name,
+                false,
+                StatusCode::BAD_REQUEST.as_u16(),
+                started.elapsed().as_millis() as u64,
+                "Invalid JSON body",
+            );
             return error_response(StatusCode::BAD_REQUEST, format!("Invalid JSON body: {err}"));
         }
     };
 
-    let original_model = match body_json.get("model").and_then(Value::as_str) {
+    original_model = match body_json.get("model").and_then(Value::as_str) {
         Some(model) => model.to_string(),
         None => {
+            emit_log(
+                &state.log_sink,
+                request_path,
+                &request_id,
+                "",
+                "",
+                &provider_name,
+                false,
+                StatusCode::BAD_REQUEST.as_u16(),
+                started.elapsed().as_millis() as u64,
+                &AppError::MissingModel.to_string(),
+            );
             return error_response(StatusCode::BAD_REQUEST, AppError::MissingModel.to_string());
         }
     };
 
     let resolved = state.model_router.resolve(&original_model);
-    body_json["model"] = Value::String(resolved.model.clone());
+    routed_model = resolved.model.clone();
+    provider_name = resolved.provider.clone();
+    body_json["model"] = Value::String(routed_model.clone());
     let stream_requested = body_json
         .get("stream")
         .and_then(Value::as_bool)
@@ -86,6 +121,18 @@ async fn forward_request(
     let provider = match state.provider_registry.get(&resolved.provider) {
         Some(provider) => provider,
         None => {
+            emit_log(
+                &state.log_sink,
+                request_path,
+                &request_id,
+                &original_model,
+                &routed_model,
+                &provider_name,
+                stream_requested,
+                StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
+                started.elapsed().as_millis() as u64,
+                &AppError::ProviderNotFound(resolved.provider.clone()).to_string(),
+            );
             return error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 AppError::ProviderNotFound(resolved.provider).to_string(),
@@ -98,6 +145,18 @@ async fn forward_request(
     let payload = match serde_json::to_vec(&body_json) {
         Ok(p) => p,
         Err(err) => {
+            emit_log(
+                &state.log_sink,
+                request_path,
+                &request_id,
+                &original_model,
+                &routed_model,
+                &provider.name,
+                stream_requested,
+                StatusCode::BAD_REQUEST.as_u16(),
+                started.elapsed().as_millis() as u64,
+                "Failed to serialize upstream body",
+            );
             return error_response(
                 StatusCode::BAD_REQUEST,
                 format!("Failed to serialize upstream body: {err}"),
@@ -127,14 +186,17 @@ async fn forward_request(
     let upstream_response = match request.send().await {
         Ok(response) => response,
         Err(err) => {
-            let latency = started.elapsed().as_millis() as u64;
             emit_log(
-                &state.log_tx,
+                &state.log_sink,
                 request_path,
+                &request_id,
                 &original_model,
+                &routed_model,
                 &provider.name,
+                stream_requested,
                 StatusCode::BAD_GATEWAY.as_u16(),
-                latency,
+                started.elapsed().as_millis() as u64,
+                "Failed to reach upstream provider",
             );
             return error_response(
                 StatusCode::BAD_GATEWAY,
@@ -144,17 +206,20 @@ async fn forward_request(
     };
 
     let status = upstream_response.status();
-    let latency = started.elapsed().as_millis() as u64;
-    emit_log(
-        &state.log_tx,
-        request_path,
-        &resolved.model,
-        &provider.name,
-        status.as_u16(),
-        latency,
-    );
 
     if !status.is_success() {
+        emit_log(
+            &state.log_sink,
+            request_path,
+            &request_id,
+            &original_model,
+            &routed_model,
+            &provider.name,
+            stream_requested,
+            status.as_u16(),
+            started.elapsed().as_millis() as u64,
+            &format!("Upstream returned HTTP {}", status.as_u16()),
+        );
         return error_response(
             StatusCode::BAD_GATEWAY,
             AppError::Upstream {
@@ -166,6 +231,18 @@ async fn forward_request(
     }
 
     if stream_requested && status.is_success() {
+        emit_log(
+            &state.log_sink,
+            request_path,
+            &request_id,
+            &original_model,
+            &routed_model,
+            &provider.name,
+            true,
+            status.as_u16(),
+            started.elapsed().as_millis() as u64,
+            "",
+        );
         return relay_sse_stream(upstream_response);
     }
 
@@ -176,6 +253,18 @@ async fn forward_request(
     let body_bytes = match upstream_response.bytes().await {
         Ok(bytes) => bytes,
         Err(err) => {
+            emit_log(
+                &state.log_sink,
+                request_path,
+                &request_id,
+                &original_model,
+                &routed_model,
+                &provider.name,
+                false,
+                StatusCode::BAD_GATEWAY.as_u16(),
+                started.elapsed().as_millis() as u64,
+                "Failed to read upstream response body",
+            );
             return error_response(
                 StatusCode::BAD_GATEWAY,
                 format!("Failed to read upstream response body: {err}"),
@@ -188,12 +277,27 @@ async fn forward_request(
         response = response.header(header::CONTENT_TYPE, content_type);
     }
 
-    response.body(Body::from(body_bytes)).unwrap_or_else(|_| {
+    let response = response.body(Body::from(body_bytes)).unwrap_or_else(|_| {
         error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "Failed to build response",
         )
-    })
+    });
+
+    emit_log(
+        &state.log_sink,
+        request_path,
+        &request_id,
+        &original_model,
+        &routed_model,
+        &provider.name,
+        false,
+        status.as_u16(),
+        started.elapsed().as_millis() as u64,
+        "",
+    );
+
+    response
 }
 
 fn error_response(status: StatusCode, message: impl Into<String>) -> Response {
@@ -223,21 +327,29 @@ fn build_upstream_url(base_url: &str, upstream_path: &str) -> String {
 }
 
 fn emit_log(
-    log_tx: &broadcast::Sender<RequestLog>,
+    log_sink: &RouterLogSink,
     path: &str,
-    model: &str,
+    request_id: &str,
+    original_model: &str,
+    routed_model: &str,
     provider: &str,
+    stream: bool,
     status: u16,
     latency_ms: u64,
+    error_summary: &str,
 ) {
-    let _ = log_tx.send(RequestLog {
-        timestamp: chrono::Local::now().format("%H:%M:%S").to_string(),
+    log_sink.emit(RequestLog {
+        timestamp: RequestLog::now_timestamp(),
+        request_id: request_id.to_string(),
         method: "POST".to_string(),
         path: path.to_string(),
-        model: model.to_string(),
+        original_model: original_model.to_string(),
+        routed_model: routed_model.to_string(),
         provider: provider.to_string(),
         status,
         latency_ms,
+        stream,
+        error_summary: error_summary.to_string(),
     });
 }
 

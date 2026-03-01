@@ -106,6 +106,12 @@ port = 12345
 default_provider = "openai-official"
 rules = []
 
+[router.logging]
+enabled = false
+file_path = "~/.vibemate/logs/router-access.log"
+max_file_size_mb = 20
+max_files = 3
+
 [agents]
 show_extra_quota = false
 usage_refresh_interval_secs = 300
@@ -129,6 +135,12 @@ rules = [
   { pattern = "claude-*", provider = "openrouter" },
   { pattern = "o1-mini", provider = "openrouter", model = "openai/o1-mini" }
 ]
+
+[router.logging]
+enabled = true
+file_path = "~/.vibemate/logs/router-access.log"
+max_file_size_mb = 20
+max_files = 3
 
 [providers.openai-official]
 base_url = "https://api.openai.com/v1"
