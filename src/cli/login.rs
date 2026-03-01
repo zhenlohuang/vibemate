@@ -21,10 +21,6 @@ pub async fn run(agent: &str, config: &AppConfig) -> Result<()> {
         })?;
     let client = config.system.build_http_client()?;
 
-    println!(
-        "Starting {} OAuth flow...",
-        agent_impl.descriptor().display_name
-    );
     auth.login(&client).await?;
     println!("{} login successful.", agent_impl.descriptor().display_name);
 
