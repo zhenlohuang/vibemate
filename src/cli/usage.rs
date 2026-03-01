@@ -455,7 +455,7 @@ mod tests {
                     ..Default::default()
                 }
             ),
-            "gpt-5-3-codex-spark-five-hour"
+            "GPT-5.3-Codex-Spark"
         );
         assert_eq!(
             derive_display_name(
@@ -524,11 +524,11 @@ mod tests {
         assert_eq!(derive_quota_name("codex", &codex_base), "five-hour");
         assert_eq!(
             derive_display_name("codex", &codex_extra_session),
-            "gpt-5-3-codex-spark-five-hour"
+            "GPT-5.3-Codex-Spark"
         );
         assert_eq!(
             derive_display_name("codex", &codex_extra_week),
-            "gpt-5-3-codex-spark-seven-day"
+            "GPT-5.3-Codex-Spark Weekly"
         );
     }
 
@@ -571,7 +571,7 @@ mod tests {
         assert_eq!(json_agent.quotas.len(), 1);
         assert_eq!(json_agent.extra_quotas.len(), 1);
         assert_eq!(json_agent.extra_quotas[0].quota_name, "extra-usage");
-        assert_eq!(json_agent.extra_quotas[0].name, "extra-usage");
+        assert_eq!(json_agent.extra_quotas[0].name, "Extra Usage");
     }
 
     #[test]
