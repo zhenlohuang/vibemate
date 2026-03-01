@@ -567,8 +567,11 @@ impl AgentUsageCapability for ClaudeAgent {
     }
 
     fn process_quota_name(&self, quota_name: &str) -> String {
-        const DISPLAY_NAME_MAP: [(&str, &str); 2] =
-            [("five-hour", "Session"), ("seven-day", "Weekly")];
+        const DISPLAY_NAME_MAP: [(&str, &str); 3] = [
+            ("five-hour", "Session"),
+            ("seven-day", "Weekly"),
+            ("extra-usage", "Extra Usage"),
+        ];
         DISPLAY_NAME_MAP
             .iter()
             .find_map(|(name, display_name)| (*name == quota_name).then_some(*display_name))
