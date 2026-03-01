@@ -12,7 +12,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     };
 
     let header = Line::from(vec![
-        Span::raw("API Proxy: "),
+        Span::raw("API Router: "),
         Span::styled(
             app.router_addr.clone(),
             Style::default().add_modifier(Modifier::BOLD),
