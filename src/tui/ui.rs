@@ -10,8 +10,8 @@ pub fn render(frame: &mut Frame, app: &App) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),
-            Constraint::Min(8),
-            Constraint::Length(1),
+            Constraint::Min(7),
+            Constraint::Length(2),
         ])
         .split(area);
 
@@ -93,4 +93,50 @@ fn footer_line(app: &App) -> Line<'static> {
     }
 
     Line::from(spans)
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
+
+    use super::render;
+    use crate::tui::app::App;
+
+    fn render_lines(app: &App, width: u16, height: u16) -> Vec<String> {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).expect("terminal should be created");
+        terminal
+            .draw(|frame| render(frame, app))
+            .expect("render should succeed");
+        buffer_to_lines(terminal.backend().buffer())
+    }
+
+    fn buffer_to_lines(buffer: &Buffer) -> Vec<String> {
+        let area = *buffer.area();
+        let mut lines = Vec::with_capacity(area.height as usize);
+        for y in 0..area.height {
+            let mut line = String::with_capacity(area.width as usize);
+            for x in 0..area.width {
+                line.push_str(buffer[(x, y)].symbol());
+            }
+            lines.push(line);
+        }
+        lines
+    }
+
+    #[test]
+    fn footer_text_is_visible_with_top_border() {
+        let app = App::new("http://127.0.0.1:12345".to_string());
+        let output = render_lines(&app, 120, 20).join("\n");
+        assert!(output.contains("Esc:quit"));
+        assert!(output.contains("Tab:switch page"));
+    }
+
+    #[test]
+    fn footer_keeps_separator_line() {
+        let app = App::new("http://127.0.0.1:12345".to_string());
+        let lines = render_lines(&app, 120, 20);
+        let footer_border_row = &lines[18];
+        assert!(footer_border_row.contains('─'));
+    }
 }
