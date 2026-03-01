@@ -13,4 +13,4 @@
 - fix(runtime): resolve log reader race conditions.
 - docs: update `how_to_add_agent` and README proxy examples.
 
-**Full Changelog**: [v0.1.1...v0.2.1](https://github.com/zhenlohuang/vibemate/compare/v0.1.1...v0.2.1)
+**Full Changelog**: [v0.1.1...v0.2.0](https://github.com/zhenlohuang/vibemate/compare/v0.1.1...v0.2.0)
