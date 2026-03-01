@@ -149,7 +149,30 @@ impl AgentUsageCapability for MyAgent {
 }
 ```
 
-You can optionally override `quota_name()` and `display_quota_name()` for custom window name formatting. See `src/agent/impls/codex.rs` for an example.
+You can optionally override `quota_name()` and `process_quota_name()` for custom window naming:
+
+- `quota_name()` controls the stable quota key used in normalized output/JSON.
+- `process_quota_name()` controls the display label shown in usage output.
+- Unmatched names should usually be returned unchanged.
+
+`display_quota_name()` already delegates to `process_quota_name()`, so most agents only need to implement `process_quota_name()`.
+
+Example:
+
+```rust
+fn process_quota_name(&self, quota_name: &str) -> String {
+    const DISPLAY_NAME_MAP: [(&str, &str); 2] = [
+        ("five-hour", "Session"),
+        ("seven-day", "Weekly"),
+    ];
+
+    DISPLAY_NAME_MAP
+        .iter()
+        .find_map(|(name, display_name)| (*name == quota_name).then_some(*display_name))
+        .unwrap_or(quota_name)
+        .to_string()
+}
+```
 
 #### 1d. Implement the OAuth Login Function
 
