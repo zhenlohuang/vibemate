@@ -16,7 +16,7 @@ use crate::error::Result;
 #[derive(Parser, Debug)]
 #[command(
     name = "vibemate",
-    version,
+    version = env!("VIBEMATE_VERSION"),
     about = "Your vibe coding companion",
     long_about = "A CLI for logging into supported agents, checking quota usage, running a local model router, and viewing a terminal dashboard."
 )]

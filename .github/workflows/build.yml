@@ -61,6 +61,12 @@ jobs:
         if: matrix.target != 'aarch64-unknown-linux-gnu'
         run: cargo test
 
+      - name: Set build version from tag
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          echo "VIBEMATE_BUILD_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }}
 
