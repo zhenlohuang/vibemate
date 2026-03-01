@@ -225,9 +225,6 @@ pub async fn get_usage_raw(token: &AgentToken, client: &reqwest::Client) -> Resu
     }
 
     let value: Value = response.json().await?;
-    if std::env::var_os("VIBEMATE_DEBUG_USAGE_JSON").is_some() {
-        eprintln!("codex usage raw json: {value}");
-    }
     Ok(value)
 }
 
