@@ -93,8 +93,7 @@ async fn forward_request(
         }
     };
 
-    let mut upstream_url = provider.base_url.trim_end_matches('/').to_string();
-    upstream_url.push_str(upstream_path);
+    let upstream_url = build_upstream_url(&provider.base_url, upstream_path);
 
     let payload = match serde_json::to_vec(&body_json) {
         Ok(p) => p,
@@ -202,6 +201,27 @@ fn error_response(status: StatusCode, message: impl Into<String>) -> Response {
     (status, axum::Json(payload)).into_response()
 }
 
+fn build_upstream_url(base_url: &str, upstream_path: &str) -> String {
+    let base = base_url.trim_end_matches('/');
+    let mut path = if upstream_path.starts_with('/') {
+        upstream_path.to_string()
+    } else {
+        format!("/{upstream_path}")
+    };
+
+    // If provider base URL already includes `/v1`, avoid duplicating `/v1` in
+    // paths like `/v1/chat/completions` -> `/v1/v1/chat/completions`.
+    if base.ends_with("/v1") {
+        if path == "/v1" {
+            path.clear();
+        } else if let Some(stripped) = path.strip_prefix("/v1/") {
+            path = format!("/{stripped}");
+        }
+    }
+
+    format!("{base}{path}")
+}
+
 fn emit_log(
     log_tx: &broadcast::Sender<RequestLog>,
     path: &str,
@@ -219,4 +239,27 @@ fn emit_log(
         status,
         latency_ms,
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_upstream_url;
+
+    #[test]
+    fn build_upstream_url_avoids_duplicate_v1() {
+        let url = build_upstream_url("https://api.openai.com/v1", "/v1/chat/completions");
+        assert_eq!(url, "https://api.openai.com/v1/chat/completions");
+    }
+
+    #[test]
+    fn build_upstream_url_keeps_v1_when_base_has_no_version() {
+        let url = build_upstream_url("https://api.openai.com", "/v1/chat/completions");
+        assert_eq!(url, "https://api.openai.com/v1/chat/completions");
+    }
+
+    #[test]
+    fn build_upstream_url_handles_trailing_slash_in_base() {
+        let url = build_upstream_url("https://openrouter.ai/api/v1/", "/v1/responses");
+        assert_eq!(url, "https://openrouter.ai/api/v1/responses");
+    }
 }
