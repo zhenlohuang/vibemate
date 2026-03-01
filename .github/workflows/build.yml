@@ -98,12 +98,34 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - uses: actions/checkout@v4
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           merge-multiple: true
 
-      - name: Create GitHub Release
+      - name: Resolve release notes
+        id: release_notes
+        run: |
+          NOTE_FILE="docs/release_notes/rel_${GITHUB_REF_NAME}.md"
+          if [ -f "${NOTE_FILE}" ]; then
+            echo "has_note=true" >> "${GITHUB_OUTPUT}"
+            echo "note_file=${NOTE_FILE}" >> "${GITHUB_OUTPUT}"
+          else
+            echo "has_note=false" >> "${GITHUB_OUTPUT}"
+            echo "No release note file found at ${NOTE_FILE}, fallback to auto-generated notes."
+          fi
+
+      - name: Create GitHub Release (custom notes)
+        if: steps.release_notes.outputs.has_note == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: ${{ steps.release_notes.outputs.note_file }}
+          files: vibemate-*
+
+      - name: Create GitHub Release (auto-generated notes)
+        if: steps.release_notes.outputs.has_note != 'true'
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
