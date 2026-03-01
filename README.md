@@ -71,7 +71,7 @@ Options:
           Print version
 ```
 
-## Usage Screenshot
+## Screenshots
 ![Usage screenshot](./docs/screenshots/usage.png)
 
 ## Configuration
