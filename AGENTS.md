@@ -30,7 +30,10 @@
 - Run `cargo test` locally before commit; add regression tests for routing, usage parsing, and config normalization changes.
 
 ## Commit & Pull Request Guidelines
-- Follow the existing history style: concise, imperative subjects, usually Conventional Commit prefixes (`feat:`, `fix:`, `refactor:`, `chore:`).
+- Use Conventional Commits for all commit messages.
+- Preferred format: `<type>: <subject>`.
+- Common types: `feat`, `fix`, `refactor`, `perf`, `docs`, `test`, `build`, `ci`, `chore`, `revert`.
+- Example: `fix: handle empty usage response`.
 - Keep commits scoped to one logical change.
 - PRs should include: purpose, key changes, test evidence (`cargo test`), and any config/doc updates.
 - Link related issues when available; include terminal screenshots only for TUI/dashboard UX changes.

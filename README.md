@@ -126,5 +126,12 @@ headers = { "HTTP-Referer" = "https://example.com", "X-Title" = "Vibemate" }
 
 Detailed configuration guide: [docs/configuration.md](./docs/configuration.md)
 
+## Contributing
+
+Git commit messages must follow Conventional Commits.
+
+- Format: `<type>: <subject>`
+- Example: `feat: add model fallback rule`
+
 ## License
 MIT License. See [LICENSE](./LICENSE).
