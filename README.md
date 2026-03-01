@@ -14,7 +14,20 @@ VibeMate is a local CLI companion for coding agents, with OAuth login, usage tra
 | Claude Code | ✅ |
 
 ## Installation
-### 1. Download binary
+### 1. Homebrew (Recommended)
+
+```bash
+brew tap zhenlohuang/tap
+brew install vibemate
+```
+
+Or install directly without tapping:
+
+```bash
+brew install zhenlohuang/tap/vibemate
+```
+
+### 2. Download binary
 Download the latest binaries from [GitHub Releases](https://github.com/zhenlohuang/vibemate/releases)
 
 Example (macOS / Linux):
@@ -24,7 +37,7 @@ chmod +x vibemate
 mv vibemate /usr/local/bin/vibemate
 ```
 
-### 2. Build from source
+### 3. Build from source
 Requires Rust (stable).
 
 ```bash

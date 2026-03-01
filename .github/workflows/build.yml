@@ -108,3 +108,89 @@ jobs:
         with:
           generate_release_notes: true
           files: vibemate-*
+
+  update_homebrew_tap:
+    needs: release
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Generate formula
+        env:
+          REPO_OWNER: ${{ github.repository_owner }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          DARWIN_ARM64_SHA="$(sha256sum "vibemate-${VERSION}-darwin-aarch64.tar.gz" | awk '{print $1}')"
+          DARWIN_X86_64_SHA="$(sha256sum "vibemate-${VERSION}-darwin-x86_64.tar.gz" | awk '{print $1}')"
+          LINUX_ARM64_SHA="$(sha256sum "vibemate-${VERSION}-linux-aarch64.tar.gz" | awk '{print $1}')"
+          LINUX_X86_64_SHA="$(sha256sum "vibemate-${VERSION}-linux-x86_64.tar.gz" | awk '{print $1}')"
+
+          cat > vibemate.rb <<EOF
+          class Vibemate < Formula
+            desc "Local CLI companion for coding agents"
+            homepage "https://github.com/${REPO_OWNER}/vibemate"
+            license "MIT"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/${REPO_OWNER}/vibemate/releases/download/v${VERSION}/vibemate-${VERSION}-darwin-aarch64.tar.gz"
+                sha256 "${DARWIN_ARM64_SHA}"
+              else
+                url "https://github.com/${REPO_OWNER}/vibemate/releases/download/v${VERSION}/vibemate-${VERSION}-darwin-x86_64.tar.gz"
+                sha256 "${DARWIN_X86_64_SHA}"
+              end
+            end
+
+            on_linux do
+              if Hardware::CPU.arm?
+                url "https://github.com/${REPO_OWNER}/vibemate/releases/download/v${VERSION}/vibemate-${VERSION}-linux-aarch64.tar.gz"
+                sha256 "${LINUX_ARM64_SHA}"
+              else
+                url "https://github.com/${REPO_OWNER}/vibemate/releases/download/v${VERSION}/vibemate-${VERSION}-linux-x86_64.tar.gz"
+                sha256 "${LINUX_X86_64_SHA}"
+              end
+            end
+
+            def install
+              bin.install "vibemate"
+            end
+
+            test do
+              assert_match "Usage", shell_output("#{bin}/vibemate --help")
+            end
+          end
+          EOF
+
+      - name: Update tap repository
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "${HOMEBREW_TAP_TOKEN}" ]; then
+            echo "HOMEBREW_TAP_TOKEN is required."
+            exit 1
+          fi
+
+          VERSION="${GITHUB_REF_NAME#v}"
+          TAP_REPO="zhenlohuang/homebrew-tap"
+
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/${TAP_REPO}.git" tap-repo
+          mkdir -p tap-repo/Formula
+          cp vibemate.rb tap-repo/Formula/vibemate.rb
+
+          cd tap-repo
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git diff --quiet; then
+            echo "No formula changes detected."
+            exit 0
+          fi
+
+          git add Formula/vibemate.rb
+          git commit -m "vibemate ${VERSION}"
+          git push origin HEAD:main
