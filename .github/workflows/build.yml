@@ -162,6 +162,7 @@ jobs:
           class Vibemate < Formula
             desc "Local CLI companion for coding agents"
             homepage "https://github.com/${REPO_OWNER}/vibemate"
+            version "${VERSION}"
             license "MIT"
 
             on_macos do
