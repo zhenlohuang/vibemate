@@ -31,9 +31,11 @@
 
 ## Commit & Pull Request Guidelines
 - Use Conventional Commits for all commit messages.
-- Preferred format: `<type>: <subject>`.
+- Preferred format: `<type>(<scope>): <subject>`.
+- Scope is required and should map to the changed module.
+- Recommended scopes: `cli`, `dashboard`, `agent`, `router`, `docs`.
 - Common types: `feat`, `fix`, `refactor`, `perf`, `docs`, `test`, `build`, `ci`, `chore`, `revert`.
-- Example: `fix: handle empty usage response`.
+- Examples: `fix(cli): handle empty usage response`, `feat(agent): add cursor usage capability`.
 - Keep commits scoped to one logical change.
 - PRs should include: purpose, key changes, test evidence (`cargo test`), and any config/doc updates.
 - Link related issues when available; include terminal screenshots only for TUI/dashboard UX changes.
