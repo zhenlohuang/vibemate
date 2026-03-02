@@ -10,7 +10,7 @@ pub const DEFAULT_FULL_CONFIG: &str = r#"# VibeMate configuration
 
 [system]
 # Optional upstream HTTP/SOCKS proxy used for outbound provider requests
-proxy = "http://127.0.0.1:7890"
+# proxy = "http://127.0.0.1:7890"
 
 [router]
 host = "127.0.0.1"
