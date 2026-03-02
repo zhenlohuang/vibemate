@@ -117,7 +117,6 @@ pub async fn login(client: &reqwest::Client) -> Result<()> {
         AppError::OAuth("Codex OAuth callback did not include a code parameter".to_string())
     })?;
 
-    println!("OAuth callback received. Exchanging token...");
     tracing::info!("Received OAuth callback, starting token exchange");
 
     let token_res = tokio::time::timeout(
