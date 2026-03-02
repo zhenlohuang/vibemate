@@ -154,6 +154,9 @@ headers = { "HTTP-Referer" = "https://example.com", "X-Title" = "VibeMate" }
 
 Detailed configuration guide: [docs/configuration.md](./docs/configuration.md)
 
+## Troubleshooting
+- See [docs/troubleshooting.md](./docs/troubleshooting.md).
+
 ## Contributing
 
 Git commit messages must follow Conventional Commits.

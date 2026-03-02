@@ -5,6 +5,7 @@ use axum::extract::{Query, State};
 use axum::response::Html;
 use axum::routing::get;
 use serde::Deserialize;
+use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, oneshot};
 
@@ -49,7 +50,7 @@ pub async fn start_callback_server(listener: TcpListener) -> Result<CallbackPayl
         let _ = shutdown_rx.await;
     });
 
-    let server_task = tokio::spawn(async move {
+    let mut server_task = tokio::spawn(async move {
         if let Err(err) = server.await {
             tracing::error!("callback server error: {err}");
         }
@@ -59,7 +60,16 @@ pub async fn start_callback_server(listener: TcpListener) -> Result<CallbackPayl
         AppError::OAuth("Callback server closed before receiving response".to_string())
     })?;
 
-    let _ = server_task.await;
+    // Give the in-flight response a brief window to flush; then force-stop if keepalive
+    // connections prevent graceful shutdown from completing.
+    match tokio::time::timeout(Duration::from_secs(2), &mut server_task).await {
+        Ok(_) => {}
+        Err(_) => {
+            tracing::debug!("callback server shutdown timed out; aborting task");
+            server_task.abort();
+            let _ = server_task.await;
+        }
+    }
     Ok(payload)
 }
 

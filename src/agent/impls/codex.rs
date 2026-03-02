@@ -1,10 +1,11 @@
 use async_trait::async_trait;
-use chrono::{Duration, Utc};
+use chrono::{Duration as ChronoDuration, Utc};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashSet;
 use std::io::ErrorKind;
+use std::time::Duration;
 use url::Url;
 
 use crate::agent::auth::pkce::{generate_challenge, generate_state, generate_verifier};
@@ -22,6 +23,8 @@ pub const CALLBACK_PORT: u16 = 1455;
 pub const REDIRECT_URI: &str = "http://localhost:1455/auth/callback";
 pub const USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
 const TOKEN_FILE_NAME: &str = "codex_auth.json";
+const CALLBACK_WAIT_TIMEOUT_SECS: u64 = 180;
+const TOKEN_EXCHANGE_TIMEOUT_SECS: u64 = 30;
 pub const DESCRIPTOR: AgentDescriptor = AgentDescriptor {
     id: "codex",
     display_name: "Codex",
@@ -89,11 +92,10 @@ pub async fn login(client: &reqwest::Client) -> Result<()> {
     tracing::info!(
         "Open this URL in your browser if it does not open automatically: {auth_url_string}"
     );
+    println!("Waiting for OAuth callback on {REDIRECT_URI} ...");
     let _ = open::that(&auth_url_string);
 
-    let callback_payload = callback
-        .await
-        .map_err(|e| AppError::OAuth(format!("Callback task failed: {e}")))??;
+    let callback_payload = wait_for_callback(callback).await?;
 
     if let Some(error) = callback_payload.error {
         let description = callback_payload
@@ -115,22 +117,37 @@ pub async fn login(client: &reqwest::Client) -> Result<()> {
         AppError::OAuth("Codex OAuth callback did not include a code parameter".to_string())
     })?;
 
-    let token_res = client
-        .post(TOKEN_URL)
-        .json(&AuthCodeExchange {
-            grant_type: "authorization_code",
-            client_id: CLIENT_ID,
-            redirect_uri: REDIRECT_URI,
-            code: &code,
-            code_verifier: &verifier,
-        })
-        .send()
-        .await?;
+    println!("OAuth callback received. Exchanging token...");
+    tracing::info!("Received OAuth callback, starting token exchange");
+
+    let token_res = tokio::time::timeout(
+        Duration::from_secs(TOKEN_EXCHANGE_TIMEOUT_SECS),
+        client
+            .post(TOKEN_URL)
+            .json(&AuthCodeExchange {
+                grant_type: "authorization_code",
+                client_id: CLIENT_ID,
+                redirect_uri: REDIRECT_URI,
+                code: &code,
+                code_verifier: &verifier,
+            })
+            .send(),
+    )
+    .await
+    .map_err(|_| {
+        AppError::OAuth(format!(
+            "Codex token exchange timed out after {TOKEN_EXCHANGE_TIMEOUT_SECS}s. {}",
+            proxy_hint()
+        ))
+    })?
+    .map_err(token_exchange_network_error)?;
 
     if !token_res.status().is_success() {
+        let status = token_res.status();
+        let body = token_res.text().await.unwrap_or_default();
+        let body_preview = truncate_for_error(&body, 300);
         return Err(AppError::OAuth(format!(
-            "Codex token exchange failed with status {}",
-            token_res.status()
+            "Codex token exchange failed with status {status}. response: {body_preview}"
         )));
     }
 
@@ -138,21 +155,23 @@ pub async fn login(client: &reqwest::Client) -> Result<()> {
     let token = AgentToken {
         access_token: token_payload.access_token,
         refresh_token: token_payload.refresh_token,
-        expires_at: Utc::now() + Duration::seconds(token_payload.expires_in.unwrap_or(3600)),
+        expires_at: Utc::now() + ChronoDuration::seconds(token_payload.expires_in.unwrap_or(3600)),
         last_refresh: Some(Utc::now()),
     };
 
     let path = auth_file_path(TOKEN_FILE_NAME)?;
     save_token(&path, &token)?;
+    tracing::info!("Codex token saved to {}", path.display());
+    println!("Token saved.");
     Ok(())
 }
 
 pub async fn refresh_if_needed(token: &mut AgentToken, client: &reqwest::Client) -> Result<()> {
     let now = Utc::now();
-    let expiring_soon = token.expires_at - now <= Duration::minutes(5);
+    let expiring_soon = token.expires_at - now <= ChronoDuration::minutes(5);
     let refresh_stale = token
         .last_refresh
-        .map(|last_refresh| now.signed_duration_since(last_refresh) >= Duration::days(8))
+        .map(|last_refresh| now.signed_duration_since(last_refresh) >= ChronoDuration::days(8))
         .unwrap_or(false);
     if !expiring_soon && !refresh_stale {
         return Ok(());
@@ -191,12 +210,78 @@ pub async fn refresh_if_needed(token: &mut AgentToken, client: &reqwest::Client)
     let payload: TokenResponse = response.json().await?;
     token.access_token = payload.access_token;
     token.refresh_token = payload.refresh_token.or(token.refresh_token.take());
-    token.expires_at = now + Duration::seconds(payload.expires_in.unwrap_or(3600));
+    token.expires_at = now + ChronoDuration::seconds(payload.expires_in.unwrap_or(3600));
     token.last_refresh = Some(now);
 
     let path = auth_file_path(TOKEN_FILE_NAME)?;
     save_token(&path, token)?;
     Ok(())
+}
+
+async fn wait_for_callback(
+    callback: tokio::task::JoinHandle<Result<crate::agent::auth::callback::CallbackPayload>>,
+) -> Result<crate::agent::auth::callback::CallbackPayload> {
+    wait_for_callback_with_timeout(callback, Duration::from_secs(CALLBACK_WAIT_TIMEOUT_SECS)).await
+}
+
+async fn wait_for_callback_with_timeout(
+    callback: tokio::task::JoinHandle<Result<crate::agent::auth::callback::CallbackPayload>>,
+    timeout_duration: Duration,
+) -> Result<crate::agent::auth::callback::CallbackPayload> {
+    tokio::time::timeout(timeout_duration, callback)
+        .await
+        .map_err(|_| {
+            AppError::OAuth(format!(
+                "Timed out waiting for OAuth callback after {}s on {REDIRECT_URI}. \
+Make sure browser redirects to localhost and no firewall blocks 127.0.0.1:{CALLBACK_PORT}.",
+                timeout_duration.as_secs()
+            ))
+        })?
+        .map_err(|e| AppError::OAuth(format!("Callback task failed: {e}")))?
+}
+
+fn token_exchange_network_error(err: reqwest::Error) -> AppError {
+    if err.is_timeout() {
+        return AppError::OAuth(format!(
+            "Codex token exchange request timed out. {}",
+            proxy_hint()
+        ));
+    }
+    if err.is_connect() {
+        return AppError::OAuth(format!(
+            "Codex token exchange request could not connect: {err}. {}",
+            proxy_hint()
+        ));
+    }
+    AppError::OAuth(format!(
+        "Codex token exchange request failed: {err}. {}",
+        proxy_hint()
+    ))
+}
+
+fn proxy_hint() -> &'static str {
+    "Check proxy settings in environment (https_proxy/all_proxy/http_proxy) and ~/.vibemate/config.toml [system].proxy."
+}
+
+fn truncate_for_error(body: &str, max_len: usize) -> String {
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return "<empty body>".to_string();
+    }
+
+    if trimmed.chars().count() <= max_len {
+        return trimmed.to_string();
+    }
+
+    let mut out = String::new();
+    for (idx, ch) in trimmed.chars().enumerate() {
+        if idx >= max_len {
+            break;
+        }
+        out.push(ch);
+    }
+    out.push_str("...(truncated)");
+    out
 }
 
 pub async fn get_usage(token: &AgentToken, client: &reqwest::Client) -> Result<UsageInfo> {
@@ -631,8 +716,57 @@ fn normalize_name(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
+    use tokio::time::{Duration, sleep};
 
-    use super::parse_usage;
+    use crate::agent::auth::callback::CallbackPayload;
+    use crate::error::AppError;
+
+    use super::{parse_usage, wait_for_callback_with_timeout};
+
+    #[tokio::test]
+    async fn wait_for_callback_with_timeout_returns_payload() {
+        let callback = tokio::spawn(async {
+            Ok(CallbackPayload {
+                code: Some("code-123".to_string()),
+                state: Some("state-abc".to_string()),
+                error: None,
+                error_description: None,
+            })
+        });
+
+        let payload = wait_for_callback_with_timeout(callback, Duration::from_secs(1))
+            .await
+            .expect("callback payload should be returned");
+        assert_eq!(payload.code.as_deref(), Some("code-123"));
+        assert_eq!(payload.state.as_deref(), Some("state-abc"));
+    }
+
+    #[tokio::test]
+    async fn wait_for_callback_with_timeout_errors_when_callback_stalls() {
+        let callback = tokio::spawn(async {
+            sleep(Duration::from_millis(100)).await;
+            Ok(CallbackPayload {
+                code: Some("late-code".to_string()),
+                state: Some("late-state".to_string()),
+                error: None,
+                error_description: None,
+            })
+        });
+
+        let err = wait_for_callback_with_timeout(callback, Duration::from_millis(10))
+            .await
+            .expect_err("timeout should return an error");
+
+        match err {
+            AppError::OAuth(message) => {
+                assert!(
+                    message.contains("Timed out waiting for OAuth callback"),
+                    "unexpected error message: {message}"
+                );
+            }
+            other => panic!("unexpected error variant: {other:?}"),
+        }
+    }
 
     #[test]
     fn parse_usage_supports_windows_object_with_used_limit() {

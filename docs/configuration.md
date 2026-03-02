@@ -58,3 +58,5 @@ What each file is for:
 - Dashboard log source behavior:
   - `router.logging.enabled = false`: dashboard router log panel reads embedded in-memory logs only.
   - `router.logging.enabled = true`: dashboard reads router logs from `file_path` (works with external `vibemate router` too).
+
+For troubleshooting steps, see [docs/troubleshooting.md](./troubleshooting.md).

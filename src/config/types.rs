@@ -50,9 +50,7 @@ pub struct SystemConfig {
 
 impl Default for SystemConfig {
     fn default() -> Self {
-        Self {
-            proxy: Some("http://127.0.0.1:7890".to_string()),
-        }
+        Self { proxy: None }
     }
 }
 
@@ -197,6 +195,12 @@ mod tests {
     use std::collections::HashMap;
 
     use super::{AppConfig, SystemConfig, first_proxy_env_value, normalize_proxy_value};
+
+    #[test]
+    fn system_config_default_proxy_is_none() {
+        let config = SystemConfig::default();
+        assert_eq!(config.proxy, None);
+    }
 
     #[test]
     fn proxy_env_uses_expected_precedence() {
