@@ -1,8 +1,21 @@
-# How To Test Routing Rules (curl)
+# How To Test Routing Rules
 
-Use the rules already in your config:
-- `gpt-mini` -> `openai/gpt-5-mini`
-- `claude-sonnet` -> `anthropic/claude-sonnet-4.6`
+Example routing rules in `~/.vibemate/config.toml`:
+
+```toml
+[router]
+default_provider = "openai"
+
+[[router.rules]]
+pattern = "gpt-mini"
+provider = "openai"
+model = "gpt-5-mini"
+
+[[router.rules]]
+pattern = "claude-sonnet"
+provider = "anthropic"
+model = "claude-sonnet-4.6"
+```
 
 ## 1. Start router
 
