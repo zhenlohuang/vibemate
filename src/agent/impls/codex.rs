@@ -503,7 +503,7 @@ fn parse_window_with_extra(
     is_extra: bool,
     source_limit_name: Option<&str>,
 ) -> Option<UsageWindow> {
-    let utilization_pct = parse_utilization_pct(value);
+    let utilization_pct = parse_utilization_pct(value).filter(|value| value.is_finite());
     let resets_at = parse_string_fields(
         value,
         &[
@@ -515,7 +515,7 @@ fn parse_window_with_extra(
         ],
     );
 
-    if utilization_pct.is_some() && resets_at.is_some() {
+    if utilization_pct.is_some() || resets_at.is_some() {
         return Some(UsageWindow {
             name: name.replace('_', "-"),
             utilization_pct: utilization_pct.unwrap_or(0.0),
@@ -823,6 +823,46 @@ mod tests {
             usage.windows[0].resets_at.as_deref(),
             Some("2026-02-28T01:00:00Z")
         );
+    }
+
+    #[test]
+    fn parse_usage_keeps_window_without_reset_at_when_utilization_present() {
+        let value = json!({
+            "plan_type": "plus",
+            "rate_limits": {
+                "five_hour": { "usage_ratio": 0.2, "resets_at": null }
+            }
+        });
+
+        let usage = parse_usage(value);
+        assert_eq!(usage.plan.as_deref(), Some("plus"));
+        let five_hour = usage
+            .windows
+            .iter()
+            .find(|w| w.name == "five-hour")
+            .expect("five-hour window should exist");
+        assert!((five_hour.utilization_pct - 20.0).abs() < 0.0001);
+        assert!(five_hour.resets_at.is_none());
+    }
+
+    #[test]
+    fn parse_usage_keeps_window_with_reset_at_when_utilization_missing() {
+        let value = json!({
+            "plan_type": "plus",
+            "rate_limits": {
+                "five_hour": { "utilization": null, "resets_at": "2026-03-06T15:00:00Z" }
+            }
+        });
+
+        let usage = parse_usage(value);
+        assert_eq!(usage.plan.as_deref(), Some("plus"));
+        let five_hour = usage
+            .windows
+            .iter()
+            .find(|w| w.name == "five-hour")
+            .expect("five-hour window should exist");
+        assert!(five_hour.utilization_pct.abs() < 0.0001);
+        assert_eq!(five_hour.resets_at.as_deref(), Some("2026-03-06T15:00:00Z"));
     }
 
     #[test]

@@ -303,17 +303,15 @@ fn lookup_usage_capability(agent_name: &str) -> Option<&'static dyn AgentUsageCa
 }
 
 fn should_display_quota(window: &UsageWindow) -> bool {
-    if !window.utilization_pct.is_finite() {
-        return false;
-    }
-    match &window.resets_at {
-        Some(value) => !value.trim().is_empty(),
-        None => false,
-    }
+    window.utilization_pct.is_finite()
+        || window
+            .resets_at
+            .as_ref()
+            .is_some_and(|value| !value.trim().is_empty())
 }
 
 fn should_display_extra_quota(window: &UsageWindow) -> bool {
-    window.utilization_pct.is_finite()
+    should_display_quota(window)
 }
 
 pub fn should_display_window(window: &UsageWindow) -> bool {
@@ -575,7 +573,7 @@ mod tests {
     }
 
     #[test]
-    fn usage_json_keeps_extra_quota_without_reset_at() {
+    fn usage_json_keeps_base_and_extra_quotas_without_reset_at() {
         let info = UsageInfo {
             agent_name: "claude-code".to_string(),
             display_name: "Claude Code".to_string(),
@@ -600,7 +598,9 @@ mod tests {
         };
 
         let json_agent = to_usage_json_agent(&info);
-        assert!(json_agent.quotas.is_empty());
+        assert_eq!(json_agent.quotas.len(), 1);
+        assert_eq!(json_agent.quotas[0].quota_name, "five-hour");
+        assert!(json_agent.quotas[0].resets_at.is_none());
         assert_eq!(json_agent.extra_quotas.len(), 1);
         assert_eq!(json_agent.extra_quotas[0].quota_name, "extra-usage");
         assert!(json_agent.extra_quotas[0].resets_at.is_none());

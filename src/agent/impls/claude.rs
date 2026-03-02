@@ -72,16 +72,16 @@ struct UsageBucket {
 
 fn usage_window(name: &str, bucket: Option<UsageBucket>) -> Option<UsageWindow> {
     let bucket = bucket?;
-    let utilization_pct = bucket.utilization?;
-    let resets_at = bucket.resets_at?;
-    if resets_at.trim().is_empty() {
+    let utilization_pct = bucket.utilization.filter(|value| value.is_finite());
+    let resets_at = bucket.resets_at.filter(|value| !value.trim().is_empty());
+    if utilization_pct.is_none() && resets_at.is_none() {
         return None;
     }
 
     Some(UsageWindow {
         name: name.to_string(),
-        utilization_pct,
-        resets_at: Some(resets_at),
+        utilization_pct: utilization_pct.unwrap_or(0.0),
+        resets_at,
         is_extra: false,
         source_limit_name: None,
     })
@@ -332,7 +332,8 @@ fn parse_extra_window(name: &str, value: &Value) -> Option<UsageWindow> {
             "usage_percent",
             "percent_used",
         ],
-    );
+    )
+    .filter(|value| value.is_finite());
     let resets_at = parse_string(
         value,
         &[
@@ -349,10 +350,10 @@ fn parse_extra_window(name: &str, value: &Value) -> Option<UsageWindow> {
             "billing_cycle_end",
         ],
     );
-    if utilization_pct.is_none() {
+    let resets_at = resets_at.filter(|value| !value.trim().is_empty());
+    if utilization_pct.is_none() && resets_at.is_none() {
         return None;
     }
-    let resets_at = resets_at.filter(|value| !value.trim().is_empty());
 
     Some(UsageWindow {
         name: name.to_string(),
@@ -647,5 +648,41 @@ mod tests {
         assert!(extra.is_extra);
         assert!(extra.resets_at.is_none());
         assert!(extra.utilization_pct.abs() < 0.0001);
+    }
+
+    #[test]
+    fn parse_usage_keeps_base_window_without_reset_at() {
+        let value = json!({
+            "five_hour": { "utilization": 6.0, "resets_at": null },
+            "seven_day": null,
+            "seven_day_opus": null
+        });
+
+        let usage = parse_usage(value).expect("parse should succeed");
+        let five_hour = usage
+            .windows
+            .iter()
+            .find(|w| w.name == "five-hour")
+            .expect("five-hour window should exist");
+        assert!((five_hour.utilization_pct - 6.0).abs() < 0.0001);
+        assert!(five_hour.resets_at.is_none());
+    }
+
+    #[test]
+    fn parse_usage_keeps_base_window_with_reset_at_without_utilization() {
+        let value = json!({
+            "five_hour": { "utilization": null, "resets_at": "2026-02-27T20:00:00Z" },
+            "seven_day": null,
+            "seven_day_opus": null
+        });
+
+        let usage = parse_usage(value).expect("parse should succeed");
+        let five_hour = usage
+            .windows
+            .iter()
+            .find(|w| w.name == "five-hour")
+            .expect("five-hour window should exist");
+        assert!(five_hour.utilization_pct.abs() < 0.0001);
+        assert_eq!(five_hour.resets_at.as_deref(), Some("2026-02-27T20:00:00Z"));
     }
 }
