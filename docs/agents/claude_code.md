@@ -4,8 +4,8 @@
 
 | Field          | Value                          |
 | -------------- | ------------------------------ |
-| Agent ID       | `claude-code`                  |
-| Display Name   | Claude Code                    |
+| Agent ID       | `claude`                       |
+| Display Name   | Claude                         |
 | Token File     | `claude_auth.json`             |
 | Source         | `src/agent/impls/claude.rs`    |
 
@@ -171,7 +171,7 @@ The `UsageInfo` struct for Claude Code:
 
 | Field          | Value                           |
 | -------------- | ------------------------------- |
-| `agent_name`   | `claude-code`                   |
-| `display_name` | `Claude Code`                   |
+| `agent_name`   | `claude`                        |
+| `display_name` | `Claude`                        |
 | `plan`         | Always `None` (not provided by API) |
 | `extra_usage`  | Raw `extra_usage` JSON value (preserved for display) |

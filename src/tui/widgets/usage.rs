@@ -355,8 +355,8 @@ mod tests {
     #[test]
     fn static_render_full_bar_has_no_center_gap() {
         let usage = vec![UsageInfo {
-            agent_name: "claude-code".to_string(),
-            display_name: "Claude Code".to_string(),
+            agent_name: "claude".to_string(),
+            display_name: "Claude".to_string(),
             plan: None,
             windows: vec![UsageWindow {
                 name: "five-hour".to_string(),
@@ -375,8 +375,8 @@ mod tests {
     #[test]
     fn static_render_prefixes_extra_quota_with_extra_label() {
         let usage = vec![UsageInfo {
-            agent_name: "claude-code".to_string(),
-            display_name: "Claude Code".to_string(),
+            agent_name: "claude".to_string(),
+            display_name: "Claude".to_string(),
             plan: None,
             windows: vec![UsageWindow {
                 name: "sonnet-4".to_string(),

@@ -24,8 +24,8 @@ pub const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 pub const ANTHROPIC_BETA: &str = "oauth-2025-04-20";
 const TOKEN_FILE_NAME: &str = "claude_auth.json";
 pub const DESCRIPTOR: AgentDescriptor = AgentDescriptor {
-    id: "claude-code",
-    display_name: "Claude Code",
+    id: "claude",
+    display_name: "Claude",
     token_file_name: TOKEN_FILE_NAME,
 };
 

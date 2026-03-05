@@ -20,7 +20,7 @@ Typical structure:
 What each file is for:
 - `config.toml`: main VibeMate config (system, router, providers, agent settings).
 - `auth/codex_auth.json`: OAuth token cache for Codex, created after `vibemate login codex`.
-- `auth/claude_auth.json`: OAuth token cache for Claude Code, created after `vibemate login claude-code`.
+- `auth/claude_auth.json`: OAuth token cache for Claude, created after `vibemate login claude`.
 
 ## Key fields reference
 

@@ -471,7 +471,7 @@ mod tests {
     fn claude_display_names_are_derived_from_claude_agent_impl() {
         assert_eq!(
             derive_display_name(
-                "claude-code",
+                "claude",
                 &UsageWindow {
                     name: "seven-day".to_string(),
                     ..Default::default()
@@ -481,7 +481,7 @@ mod tests {
         );
         assert_eq!(
             derive_display_name(
-                "claude-code",
+                "claude",
                 &UsageWindow {
                     name: "sonnet-4".to_string(),
                     ..Default::default()
@@ -537,14 +537,14 @@ mod tests {
             is_extra: true,
             ..Default::default()
         };
-        assert_eq!(derive_quota_name("claude-code", &claude_extra), "sonnet-4");
+        assert_eq!(derive_quota_name("claude", &claude_extra), "sonnet-4");
     }
 
     #[test]
     fn usage_json_splits_extra_quotas_for_claude() {
         let info = UsageInfo {
-            agent_name: "claude-code".to_string(),
-            display_name: "Claude Code".to_string(),
+            agent_name: "claude".to_string(),
+            display_name: "Claude".to_string(),
             plan: None,
             windows: vec![
                 UsageWindow {
@@ -575,8 +575,8 @@ mod tests {
     #[test]
     fn usage_json_keeps_base_and_extra_quotas_without_reset_at() {
         let info = UsageInfo {
-            agent_name: "claude-code".to_string(),
-            display_name: "Claude Code".to_string(),
+            agent_name: "claude".to_string(),
+            display_name: "Claude".to_string(),
             plan: None,
             windows: vec![
                 UsageWindow {
@@ -648,7 +648,7 @@ mod tests {
         let err = validate_target_agent(Some("unknown-agent")).unwrap_err();
         assert_eq!(
             err.to_string(),
-            "OAuth error: Unsupported agent 'unknown-agent'. Use 'codex', 'claude-code', 'cursor'"
+            "OAuth error: Unsupported agent 'unknown-agent'. Use 'codex', 'claude', 'cursor'"
         );
     }
 }

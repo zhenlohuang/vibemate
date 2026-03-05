@@ -53,7 +53,7 @@ enum Commands {
     Usage {
         #[arg(
             value_name = "AGENT",
-            help = "Optional agent ID (for example: codex, claude-code)"
+            help = "Optional agent ID (for example: codex, claude)"
         )]
         agent: Option<String>,
         #[arg(
