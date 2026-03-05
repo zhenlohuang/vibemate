@@ -2,13 +2,17 @@ use std::io;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use crossterm::event::{self, Event, KeyCode};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
+    MouseButton, MouseEventKind,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use tokio::sync::{broadcast, mpsc};
 
 use crate::agent::auth::token::{auth_file_path, save_token};
@@ -18,7 +22,7 @@ use crate::error::Result;
 use crate::model_router;
 use crate::model_router::RequestLog;
 use crate::model_router::logging::{FileLogTailer, resolve_log_path};
-use crate::tui::app::App;
+use crate::tui::app::{ActivePage, App};
 use crate::tui::ui;
 
 struct UsageUpdate {
@@ -40,14 +44,18 @@ enum DashboardLogMode {
 pub async fn run(config: &AppConfig) -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
     let run_result = run_dashboard_loop(config, &mut terminal).await;
 
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    )?;
     terminal.show_cursor()?;
 
     run_result
@@ -123,6 +131,7 @@ async fn run_dashboard_loop(
 
         while let Ok(update) = usage_rx.try_recv() {
             app.usage = update.usage;
+            app.clamp_usage_selected_card();
             app.status_message = update.message;
         }
 
@@ -153,27 +162,147 @@ async fn run_dashboard_loop(
             }
         }
 
-        terminal.draw(|frame| ui::render(frame, &app))?;
+        terminal.draw(|frame| ui::render(frame, &mut app))?;
 
         if event::poll(Duration::from_millis(100))? {
-            if let Event::Key(key) = event::read()? {
-                let ctrl = key
-                    .modifiers
-                    .contains(crossterm::event::KeyModifiers::CONTROL);
-                match key.code {
-                    KeyCode::Esc => break,
-                    KeyCode::Char('q') => break,
-                    KeyCode::Char('c') if ctrl => break,
-                    KeyCode::Char('r') => {
-                        let update = collect_usage(config, config.show_extra_quota()).await;
-                        app.usage = update.usage;
-                        app.status_message = update.message;
+            match event::read()? {
+                Event::Key(key) => {
+                    if key.kind != KeyEventKind::Press {
+                        continue;
                     }
-                    KeyCode::Char('j') | KeyCode::Down => app.scroll_down(),
-                    KeyCode::Char('k') | KeyCode::Up => app.scroll_up(),
-                    KeyCode::Tab => app.next_tab(),
-                    _ => {}
+                    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+                    match key.code {
+                        KeyCode::Esc => {
+                            if app.active_page == ActivePage::Usage
+                                && app.is_usage_widget_selected()
+                            {
+                                app.clear_usage_selected_card();
+                            } else {
+                                break;
+                            }
+                        }
+                        KeyCode::Char('q') => break,
+                        KeyCode::Char('c') if ctrl => break,
+                        KeyCode::Char('r') => {
+                            let update = collect_usage(config, config.show_extra_quota()).await;
+                            app.usage = update.usage;
+                            app.clamp_usage_selected_card();
+                            app.status_message = update.message;
+                        }
+                        KeyCode::Char('j') => match app.active_page {
+                            ActivePage::Usage => {
+                                if app.is_usage_widget_selected() {
+                                    app.usage_scroll_down(app.usage_page_step);
+                                }
+                            }
+                            ActivePage::Router => app.logs_scroll_down(),
+                        },
+                        KeyCode::Char('k') => match app.active_page {
+                            ActivePage::Usage => {
+                                if app.is_usage_widget_selected() {
+                                    app.usage_scroll_up(app.usage_page_step);
+                                }
+                            }
+                            ActivePage::Router => app.logs_scroll_up(),
+                        },
+                        KeyCode::Down => match app.active_page {
+                            ActivePage::Usage => {
+                                if app.is_usage_widget_selected() {
+                                    app.usage_scroll_down(1);
+                                }
+                            }
+                            ActivePage::Router => app.logs_scroll_down(),
+                        },
+                        KeyCode::Up => match app.active_page {
+                            ActivePage::Usage => {
+                                if app.is_usage_widget_selected() {
+                                    app.usage_scroll_up(1);
+                                }
+                            }
+                            ActivePage::Router => app.logs_scroll_up(),
+                        },
+                        KeyCode::PageDown => {
+                            if app.active_page == ActivePage::Usage
+                                && app.is_usage_widget_selected()
+                            {
+                                app.usage_scroll_down(app.usage_page_step);
+                            }
+                        }
+                        KeyCode::PageUp => {
+                            if app.active_page == ActivePage::Usage
+                                && app.is_usage_widget_selected()
+                            {
+                                app.usage_scroll_up(app.usage_page_step);
+                            }
+                        }
+                        KeyCode::Home => {
+                            if app.active_page == ActivePage::Usage
+                                && app.is_usage_widget_selected()
+                            {
+                                app.usage_scroll_to_top();
+                            }
+                        }
+                        KeyCode::End => {
+                            if app.active_page == ActivePage::Usage
+                                && app.is_usage_widget_selected()
+                            {
+                                app.usage_scroll_to_bottom();
+                            }
+                        }
+                        KeyCode::Enter => {
+                            if app.active_page == ActivePage::Usage {
+                                app.select_first_usage_card();
+                            }
+                        }
+                        KeyCode::Tab => {
+                            if app.active_page == ActivePage::Usage
+                                && app.is_usage_widget_selected()
+                            {
+                                app.cycle_usage_selected_card_forward();
+                            } else {
+                                app.next_tab();
+                            }
+                        }
+                        _ => {}
+                    }
                 }
+                Event::Mouse(mouse) => {
+                    let screen = terminal.size()?;
+                    let screen_area = Rect::new(0, 0, screen.width, screen.height);
+                    let card_under_cursor =
+                        usage_card_at_position(&app, screen_area, mouse.column, mouse.row);
+                    match mouse.kind {
+                        MouseEventKind::Down(MouseButton::Left)
+                        | MouseEventKind::Up(MouseButton::Left)
+                        | MouseEventKind::Drag(MouseButton::Left) => {
+                            if app.active_page == ActivePage::Usage {
+                                app.set_usage_selected_card(card_under_cursor);
+                            }
+                        }
+                        MouseEventKind::ScrollDown => {
+                            if app.active_page == ActivePage::Usage {
+                                if app.is_usage_widget_selected() {
+                                    app.usage_scroll_down(1);
+                                } else if card_under_cursor.is_some() {
+                                    app.set_usage_selected_card(card_under_cursor);
+                                    app.usage_scroll_down(1);
+                                }
+                            }
+                        }
+                        MouseEventKind::ScrollUp => {
+                            if app.active_page == ActivePage::Usage {
+                                if app.is_usage_widget_selected() {
+                                    app.usage_scroll_up(1);
+                                } else if card_under_cursor.is_some() {
+                                    app.set_usage_selected_card(card_under_cursor);
+                                    app.usage_scroll_up(1);
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -185,6 +314,31 @@ async fn run_dashboard_loop(
     log_task.1.abort();
 
     Ok(())
+}
+
+fn point_in_rect(x: u16, y: u16, area: Rect) -> bool {
+    x >= area.x
+        && x < area.x.saturating_add(area.width)
+        && y >= area.y
+        && y < area.y.saturating_add(area.height)
+}
+
+fn usage_card_at_position(app: &App, screen: Rect, x: u16, y: u16) -> Option<usize> {
+    if app.active_page != ActivePage::Usage || app.usage.is_empty() {
+        return None;
+    }
+    let usage_area = ui::usage_widget_area(screen, app);
+    if !point_in_rect(x, y, usage_area) {
+        return None;
+    }
+    let constraints: Vec<Constraint> = (0..app.usage.len())
+        .map(|_| Constraint::Ratio(1, app.usage.len() as u32))
+        .collect();
+    let cards = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints(constraints)
+        .split(usage_area);
+    cards.iter().position(|card| point_in_rect(x, y, *card))
 }
 
 fn dashboard_log_mode(config: &AppConfig) -> DashboardLogMode {
@@ -296,7 +450,9 @@ async fn tail_file_logs(path: PathBuf, max_files: u32, log_event_tx: mpsc::Sende
 
 #[cfg(test)]
 mod tests {
-    use super::{DashboardLogMode, dashboard_log_mode};
+    use ratatui::layout::Rect;
+
+    use super::{DashboardLogMode, dashboard_log_mode, point_in_rect};
     use crate::config::AppConfig;
 
     #[test]
@@ -324,6 +480,16 @@ mod tests {
             }
             DashboardLogMode::Memory => panic!("expected file mode"),
         }
+    }
+
+    #[test]
+    fn point_in_rect_checks_bounds() {
+        let area = Rect::new(10, 5, 20, 6);
+        assert!(point_in_rect(10, 5, area));
+        assert!(point_in_rect(29, 10, area));
+        assert!(!point_in_rect(30, 10, area));
+        assert!(!point_in_rect(9, 5, area));
+        assert!(!point_in_rect(10, 11, area));
     }
 }
 

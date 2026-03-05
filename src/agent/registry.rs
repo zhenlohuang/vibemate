@@ -1,6 +1,6 @@
 use std::sync::OnceLock;
 
-use super::impls::{claude, codex, cursor};
+use super::impls::{claude, codex, cursor, gemini};
 use super::traits::Agent;
 
 pub struct AgentRegistry {
@@ -14,6 +14,7 @@ impl AgentRegistry {
                 Box::new(codex::CodexAgent),
                 Box::new(claude::ClaudeAgent),
                 Box::new(cursor::CursorAgent),
+                Box::new(gemini::GeminiAgent),
             ],
         }
     }

@@ -648,7 +648,7 @@ mod tests {
         let err = validate_target_agent(Some("unknown-agent")).unwrap_err();
         assert_eq!(
             err.to_string(),
-            "OAuth error: Unsupported agent 'unknown-agent'. Use 'codex', 'claude', 'cursor'"
+            "OAuth error: Unsupported agent 'unknown-agent'. Use 'codex', 'claude', 'cursor', 'gemini'"
         );
     }
 }

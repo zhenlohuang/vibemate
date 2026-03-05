@@ -7,6 +7,12 @@ use crate::agent::{UsageInfo, UsageWindow};
 use crate::cli::usage::{derive_display_name, should_display_window};
 use chrono::{DateTime, Datelike, Local, Timelike};
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct UsageRenderMeta {
+    pub max_scroll: usize,
+    pub page_step: usize,
+}
+
 /// Count visible rows for one agent: 4 lines per window + 1 separator if both groups present.
 fn card_rows(item: &UsageInfo) -> usize {
     let (normal, extra) = split_windows(item);
@@ -21,7 +27,9 @@ fn split_windows(item: &UsageInfo) -> (Vec<&UsageWindow>, Vec<&UsageWindow>) {
     let visible: Vec<_> = item
         .windows
         .iter()
-        .filter(|w| should_display_window(w))
+        .filter(|w| {
+            should_display_window(w) && !derive_display_name(&item.agent_name, w).trim().is_empty()
+        })
         .collect();
     let normal: Vec<_> = visible.iter().filter(|w| !w.is_extra).copied().collect();
     let extra: Vec<_> = visible.iter().filter(|w| w.is_extra).copied().collect();
@@ -38,13 +46,21 @@ pub fn needed_height(usage_items: &[UsageInfo]) -> u16 {
     (2 + max_rows as u16).max(3)
 }
 
-pub fn render(frame: &mut Frame, area: Rect, usage_items: &[UsageInfo]) {
+pub fn render(
+    frame: &mut Frame,
+    area: Rect,
+    usage_items: &[UsageInfo],
+    scroll: usize,
+    selected_card: Option<usize>,
+) -> UsageRenderMeta {
     render_with_empty_message(
         frame,
         area,
         usage_items,
+        scroll,
+        selected_card,
         "No usage data yet. Press r to refresh.",
-    );
+    )
 }
 
 pub fn render_static_lines(
@@ -75,7 +91,7 @@ pub fn render_static_buffer(
     if terminal
         .draw(|frame| {
             let area = frame.area();
-            render_with_empty_message(frame, area, usage_items, empty_message);
+            let _ = render_with_empty_message(frame, area, usage_items, 0, None, empty_message);
         })
         .is_err()
     {
@@ -89,12 +105,17 @@ fn render_with_empty_message(
     frame: &mut Frame,
     area: Rect,
     usage_items: &[UsageInfo],
+    scroll: usize,
+    selected_card: Option<usize>,
     empty_message: &str,
-) {
+) -> UsageRenderMeta {
     if usage_items.is_empty() {
         let empty = Paragraph::new(empty_message);
         frame.render_widget(empty, area);
-        return;
+        return UsageRenderMeta {
+            max_scroll: 0,
+            page_step: 1,
+        };
     }
 
     let constraints: Vec<Constraint> = (0..usage_items.len())
@@ -104,6 +125,9 @@ fn render_with_empty_message(
         .direction(Direction::Horizontal)
         .constraints(constraints)
         .split(area);
+
+    let mut selected_max_scroll = 0usize;
+    let mut selected_page_step = 1usize;
 
     for (index, item) in usage_items.iter().enumerate() {
         let card_area = cards[index];
@@ -118,8 +142,16 @@ fn render_with_empty_message(
             .map(|plan| format!("{agent_title} ({plan})"))
             .unwrap_or(agent_title);
 
+        let border_style = if selected_card == Some(index) {
+            Style::default()
+                .fg(Color::Rgb(161, 167, 229))
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
         let card_block = Block::default()
             .borders(Borders::ALL)
+            .border_style(border_style)
             .title(title)
             .style(Style::default().bg(Color::Rgb(35, 40, 55)));
         frame.render_widget(card_block.clone(), card_area);
@@ -132,18 +164,73 @@ fn render_with_empty_message(
             continue;
         }
 
-        // Build row constraints: 4 lines per window
+        let mut windows_to_render: Vec<&UsageWindow> =
+            Vec::with_capacity(normal.len().saturating_add(extra.len()));
+        windows_to_render.extend(normal.iter().copied());
+        windows_to_render.extend(extra.iter().copied());
+
+        if card_inner.height < 4 {
+            if selected_card == Some(index) {
+                selected_max_scroll = windows_to_render.len();
+            }
+            frame.render_widget(Paragraph::new("Increase terminal height"), card_inner);
+            continue;
+        }
+
+        let available_rows = card_inner.height as usize;
+        let visible_capacity = available_rows / 4;
+        if visible_capacity == 0 {
+            if selected_card == Some(index) {
+                selected_max_scroll = windows_to_render.len();
+            }
+            frame.render_widget(Paragraph::new("Increase terminal height"), card_inner);
+            continue;
+        }
+
+        let card_max_scroll = windows_to_render.len().saturating_sub(visible_capacity);
+        let card_page_step = (visible_capacity / 2).max(1);
+        if selected_card == Some(index) {
+            selected_max_scroll = card_max_scroll;
+            selected_page_step = card_page_step;
+        }
+
+        let effective_scroll = if selected_card == Some(index) {
+            scroll
+        } else {
+            0
+        };
+        let start = effective_scroll.min(card_max_scroll);
+        let mut windows_to_render: Vec<&UsageWindow> = windows_to_render
+            .iter()
+            .skip(start)
+            .take(visible_capacity)
+            .copied()
+            .collect();
+
+        let above_count = start;
+        let mut below_count = normal
+            .len()
+            .saturating_add(extra.len())
+            .saturating_sub(start.saturating_add(windows_to_render.len()));
+        let mut show_truncated_note = above_count > 0 || below_count > 0;
+        if show_truncated_note {
+            let required_rows = windows_to_render.len().saturating_mul(4);
+            if required_rows.saturating_add(1) > available_rows && !windows_to_render.is_empty() {
+                windows_to_render.pop();
+                below_count = below_count.saturating_add(1);
+            }
+            show_truncated_note = above_count > 0 || below_count > 0;
+        }
+
+        // Build row constraints: 4 lines per visible window.
         let mut row_constraints = Vec::new();
-        for _ in &normal {
+        for _ in &windows_to_render {
             row_constraints.push(Constraint::Length(1)); // title
             row_constraints.push(Constraint::Length(1)); // bar + percent
             row_constraints.push(Constraint::Length(1)); // reset text
             row_constraints.push(Constraint::Length(1)); // spacer
         }
-        for _ in &extra {
-            row_constraints.push(Constraint::Length(1));
-            row_constraints.push(Constraint::Length(1));
-            row_constraints.push(Constraint::Length(1));
+        if show_truncated_note {
             row_constraints.push(Constraint::Length(1));
         }
         row_constraints.push(Constraint::Min(0)); // absorb remaining space
@@ -155,17 +242,37 @@ fn render_with_empty_message(
 
         let mut row_idx = 0;
 
-        // Render normal quotas
-        for window in &normal {
+        for window in &windows_to_render {
             render_window(frame, &rows, row_idx, &item.agent_name, window);
             row_idx += 4;
         }
 
-        // Render extra quotas
-        for window in &extra {
-            render_window(frame, &rows, row_idx, &item.agent_name, window);
-            row_idx += 4;
+        if show_truncated_note {
+            let note_text = match (above_count, below_count) {
+                (above, below) if above > 0 && below > 0 => {
+                    format!("... {above} above, {below} more quota(s)")
+                }
+                (above, 0) if above > 0 => format!("... {above} above"),
+                (0, below) if below > 0 => format!("... {below} more quota(s)"),
+                _ => String::new(),
+            };
+            if !note_text.is_empty() {
+                let note = Paragraph::new(Span::styled(
+                    note_text,
+                    Style::default().fg(Color::DarkGray),
+                ));
+                frame.render_widget(note, rows[row_idx]);
+            }
         }
+    }
+
+    UsageRenderMeta {
+        max_scroll: if selected_card.is_some() {
+            selected_max_scroll
+        } else {
+            0
+        },
+        page_step: selected_page_step.max(1),
     }
 }
 
@@ -320,9 +427,42 @@ fn format_utc_offset(dt: DateTime<Local>) -> String {
 
 #[cfg(test)]
 mod tests {
+    use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
+
     use crate::agent::{UsageInfo, UsageWindow};
 
-    use super::render_static_lines;
+    use super::{UsageRenderMeta, render, render_static_lines};
+
+    fn buffer_to_lines(buffer: &Buffer) -> Vec<String> {
+        let area = *buffer.area();
+        let mut lines = Vec::with_capacity(area.height as usize);
+        for y in 0..area.height {
+            let mut line = String::with_capacity(area.width as usize);
+            for x in 0..area.width {
+                line.push_str(buffer[(x, y)].symbol());
+            }
+            lines.push(line.trim_end().to_string());
+        }
+        lines
+    }
+
+    fn render_lines_with_scroll(
+        usage: &[UsageInfo],
+        width: u16,
+        height: u16,
+        scroll: usize,
+        selected_card: Option<usize>,
+    ) -> (Vec<String>, UsageRenderMeta) {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).expect("terminal should be created");
+        let mut meta = UsageRenderMeta::default();
+        terminal
+            .draw(|frame| {
+                meta = render(frame, frame.area(), usage, scroll, selected_card);
+            })
+            .expect("render should succeed");
+        (buffer_to_lines(terminal.backend().buffer()), meta)
+    }
 
     #[test]
     fn static_render_includes_agent_title_and_percent() {
@@ -390,5 +530,98 @@ mod tests {
 
         let output = render_static_lines(&usage, 100, "No usage data available.").join("\n");
         assert!(output.contains("Extra: sonnet-4"));
+    }
+
+    #[test]
+    fn static_render_skips_window_with_empty_display_name() {
+        let usage = vec![UsageInfo {
+            agent_name: "gemini".to_string(),
+            display_name: "Gemini".to_string(),
+            plan: None,
+            windows: vec![
+                UsageWindow {
+                    name: "gemini-2.5-pro".to_string(),
+                    utilization_pct: 10.0,
+                    resets_at: Some("2026-03-06T00:00:00Z".to_string()),
+                    is_extra: false,
+                    source_limit_name: None,
+                },
+                UsageWindow {
+                    name: "".to_string(),
+                    utilization_pct: 20.0,
+                    resets_at: Some("2026-03-06T00:00:00Z".to_string()),
+                    is_extra: false,
+                    source_limit_name: None,
+                },
+            ],
+            extra_usage: None,
+        }];
+
+        let output = render_static_lines(&usage, 100, "No usage data available.").join("\n");
+        assert!(output.contains("Gemini 2.5 Pro"));
+        assert_eq!(output.matches("% used").count(), 1);
+    }
+
+    #[test]
+    fn render_with_scroll_moves_usage_window_slice() {
+        let windows = (1..=5)
+            .map(|index| UsageWindow {
+                name: format!("quota-{index}"),
+                utilization_pct: (index * 10) as f64,
+                resets_at: Some("2026-03-06T00:00:00Z".to_string()),
+                is_extra: false,
+                source_limit_name: None,
+            })
+            .collect::<Vec<_>>();
+
+        let usage = vec![UsageInfo {
+            agent_name: "test-agent".to_string(),
+            display_name: "Test".to_string(),
+            plan: None,
+            windows,
+            extra_usage: None,
+        }];
+
+        let (lines0, meta0) = render_lines_with_scroll(&usage, 100, 16, 0, Some(0));
+        let output0 = lines0.join("\n");
+        assert!(output0.contains("quota-1"));
+        assert!(output0.contains("quota-2"));
+        assert!(output0.contains("quota-3"));
+        assert!(!output0.contains("quota-4"));
+        assert_eq!(meta0.max_scroll, 2);
+
+        let (lines1, meta1) = render_lines_with_scroll(&usage, 100, 16, 1, Some(0));
+        let output1 = lines1.join("\n");
+        assert!(!output1.contains("quota-1"));
+        assert!(output1.contains("quota-2"));
+        assert!(output1.contains("quota-3"));
+        assert!(output1.contains("quota-4"));
+        assert_eq!(meta1.max_scroll, 2);
+    }
+
+    #[test]
+    fn unselected_card_does_not_apply_scroll_offset() {
+        let windows = (1..=5)
+            .map(|index| UsageWindow {
+                name: format!("quota-{index}"),
+                utilization_pct: (index * 10) as f64,
+                resets_at: Some("2026-03-06T00:00:00Z".to_string()),
+                is_extra: false,
+                source_limit_name: None,
+            })
+            .collect::<Vec<_>>();
+        let usage = vec![UsageInfo {
+            agent_name: "test-agent".to_string(),
+            display_name: "Test".to_string(),
+            plan: None,
+            windows,
+            extra_usage: None,
+        }];
+
+        let (lines0, meta0) = render_lines_with_scroll(&usage, 100, 16, 0, None);
+        let (lines1, meta1) = render_lines_with_scroll(&usage, 100, 16, 1, None);
+        assert_eq!(lines0, lines1);
+        assert_eq!(meta0.max_scroll, 0);
+        assert_eq!(meta1.max_scroll, 0);
     }
 }
