@@ -11,7 +11,9 @@ VibeMate is a local CLI companion for coding agents, with OAuth login, usage tra
 | Name | Status |
 | --- | --- |
 | Codex | ✅ |
-| Claude Code | ✅ |
+| Claude | ✅ |
+| Cursor | ✅ |
+| Gemini | ✅ |
 
 ## Installation
 ### 1. Homebrew (Recommended)
