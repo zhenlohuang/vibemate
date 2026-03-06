@@ -72,10 +72,8 @@ fn glob_match(pattern: &str, input: &str) -> bool {
         }
     }
 
-    if anchored_end {
-        if let Some(last) = parts.iter().rev().find(|part| !part.is_empty()) {
-            return input.ends_with(last);
-        }
+    if anchored_end && let Some(last) = parts.iter().rev().find(|part| !part.is_empty()) {
+        return input.ends_with(last);
     }
 
     true

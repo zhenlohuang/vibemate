@@ -10,10 +10,13 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::agent::auth::token::{AgentToken, auth_file_path, load_token, save_token};
+use crate::agent::usage_source::gemini_local::GeminiLocalSource;
+use crate::agent::usage_source::{UsageFallbackChain, UsageSource};
 use crate::agent::{
     Agent, AgentAuthCapability, AgentDescriptor, AgentIdentity, AgentUsageCapability, UsageInfo,
     UsageWindow,
 };
+use crate::config::{AppConfig, UsageSourceKind, validate_agent_usage_source};
 use crate::error::{AppError, Result};
 
 const TOKEN_FILE_NAME: &str = "gemini_auth.json";
@@ -49,7 +52,7 @@ struct RefreshTokenResponse {
 }
 
 pub async fn login(_client: &reqwest::Client) -> Result<()> {
-    let creds_path = gemini_oauth_creds_path()?;
+    let creds_path = local_oauth_creds_path()?;
     if !creds_path.exists() {
         return Err(AppError::OAuth(format!(
             "Gemini CLI credentials not found at {}. Run `gemini auth login` and retry.",
@@ -59,7 +62,7 @@ pub async fn login(_client: &reqwest::Client) -> Result<()> {
 
     let raw = fs::read_to_string(&creds_path)?;
     let value: Value = serde_json::from_str(&raw)?;
-    let token = import_gemini_creds(&value)?;
+    let token = import_local_oauth_creds(&value)?;
     let path = auth_file_path(TOKEN_FILE_NAME)?;
     save_token(&path, &token)?;
     Ok(())
@@ -143,13 +146,13 @@ pub async fn load_saved_token() -> Result<Option<AgentToken>> {
     load_token(&path)
 }
 
-fn gemini_oauth_creds_path() -> Result<PathBuf> {
+pub fn local_oauth_creds_path() -> Result<PathBuf> {
     let home = dirs::home_dir()
         .ok_or_else(|| AppError::Config("Unable to find home directory".to_string()))?;
     Ok(home.join(GEMINI_CREDS_FILE))
 }
 
-fn import_gemini_creds(value: &Value) -> Result<AgentToken> {
+pub fn import_local_oauth_creds(value: &Value) -> Result<AgentToken> {
     let access_token =
         find_first_string(value, &["access_token", "accessToken"]).ok_or_else(|| {
             AppError::OAuth("Gemini oauth_creds.json is missing access_token".to_string())
@@ -639,6 +642,47 @@ fn parse_usage(load_code_assist: &Value, retrieve_user_quota: &Value) -> UsageIn
         .map(|tier| normalize_tier_name(&tier)),
         windows: parse_quota_windows(retrieve_user_quota),
         extra_usage: None,
+        source: Some("oauth".to_string()),
+    }
+}
+
+fn build_usage_chain(config: &AppConfig) -> Result<UsageFallbackChain> {
+    let source_config = config.agent_source_config(DESCRIPTOR.id);
+    validate_agent_usage_source(DESCRIPTOR.id, source_config.usage_source)?;
+    let mut sources: Vec<Box<dyn UsageSource>> = Vec::new();
+    match source_config.usage_source {
+        UsageSourceKind::Auto => {
+            sources.push(Box::new(OauthSource));
+            sources.push(Box::new(GeminiLocalSource::new(source_config)));
+        }
+        UsageSourceKind::Oauth => sources.push(Box::new(OauthSource)),
+        UsageSourceKind::Local => sources.push(Box::new(GeminiLocalSource::new(source_config))),
+        UsageSourceKind::Cli | UsageSourceKind::Web => unreachable!(),
+    }
+    Ok(UsageFallbackChain::new(sources))
+}
+
+struct OauthSource;
+
+#[async_trait]
+impl UsageSource for OauthSource {
+    fn kind(&self) -> UsageSourceKind {
+        UsageSourceKind::Oauth
+    }
+
+    async fn is_available(&self) -> bool {
+        true
+    }
+
+    async fn fetch_usage(
+        &self,
+        token: Option<&AgentToken>,
+        client: &reqwest::Client,
+    ) -> Result<UsageInfo> {
+        let token = token.ok_or_else(|| {
+            AppError::NoUsageSources("Gemini saved OAuth token is not available".to_string())
+        })?;
+        get_usage(token, client).await
     }
 }
 
@@ -926,6 +970,15 @@ impl AgentUsageCapability for GeminiAgent {
         get_usage_raw(token, client).await
     }
 
+    async fn get_usage_with_fallback(
+        &self,
+        token: Option<&AgentToken>,
+        client: &reqwest::Client,
+        config: &AppConfig,
+    ) -> Result<UsageInfo> {
+        build_usage_chain(config)?.fetch_usage(token, client).await
+    }
+
     fn process_quota_name(&self, quota_name: &str) -> String {
         humanize_model_name(quota_name)
     }
@@ -935,7 +988,7 @@ impl AgentUsageCapability for GeminiAgent {
 mod tests {
     use serde_json::json;
 
-    use super::{humanize_model_name, import_gemini_creds, parse_usage};
+    use super::{humanize_model_name, import_local_oauth_creds, parse_usage};
 
     #[test]
     fn parse_usage_maps_quota_buckets() {
@@ -1048,7 +1101,7 @@ mod tests {
             "expiry_date": 1778000000000i64
         });
 
-        let token = import_gemini_creds(&value).expect("should parse credentials");
+        let token = import_local_oauth_creds(&value).expect("should parse credentials");
         assert_eq!(token.access_token, "access-token");
         assert_eq!(token.refresh_token.as_deref(), Some("refresh-token"));
         assert_eq!(token.expires_at.timestamp_millis(), 1778000000000i64);

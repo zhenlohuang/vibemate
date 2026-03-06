@@ -3,6 +3,7 @@ pub mod impls;
 mod registry;
 mod traits;
 mod types;
+pub mod usage_source;
 
 pub use registry::global_agent_registry;
 pub use traits::{Agent, AgentAuthCapability, AgentIdentity, AgentUsageCapability};

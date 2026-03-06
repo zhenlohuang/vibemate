@@ -22,6 +22,18 @@ pub struct RouterState {
     pub log_sink: RouterLogSink,
 }
 
+struct LogContext<'a> {
+    path: &'a str,
+    request_id: &'a str,
+    original_model: &'a str,
+    routed_model: &'a str,
+    provider: &'a str,
+    stream: bool,
+    status: u16,
+    latency_ms: u64,
+    error_summary: &'a str,
+}
+
 pub async fn chat_completions(
     State(state): State<Arc<RouterState>>,
     headers: HeaderMap,
@@ -76,15 +88,17 @@ async fn forward_request(
         Err(err) => {
             emit_log(
                 &state.log_sink,
-                request_path,
-                &request_id,
-                &original_model,
-                &routed_model,
-                &provider_name,
-                false,
-                StatusCode::BAD_REQUEST.as_u16(),
-                started.elapsed().as_millis() as u64,
-                "Invalid JSON body",
+                LogContext {
+                    path: request_path,
+                    request_id: &request_id,
+                    original_model: &original_model,
+                    routed_model: &routed_model,
+                    provider: &provider_name,
+                    stream: false,
+                    status: StatusCode::BAD_REQUEST.as_u16(),
+                    latency_ms: started.elapsed().as_millis() as u64,
+                    error_summary: "Invalid JSON body",
+                },
             );
             return error_response(StatusCode::BAD_REQUEST, format!("Invalid JSON body: {err}"));
         }
@@ -93,17 +107,20 @@ async fn forward_request(
     original_model = match body_json.get("model").and_then(Value::as_str) {
         Some(model) => model.to_string(),
         None => {
+            let error_summary = AppError::MissingModel.to_string();
             emit_log(
                 &state.log_sink,
-                request_path,
-                &request_id,
-                "",
-                "",
-                &provider_name,
-                false,
-                StatusCode::BAD_REQUEST.as_u16(),
-                started.elapsed().as_millis() as u64,
-                &AppError::MissingModel.to_string(),
+                LogContext {
+                    path: request_path,
+                    request_id: &request_id,
+                    original_model: "",
+                    routed_model: "",
+                    provider: &provider_name,
+                    stream: false,
+                    status: StatusCode::BAD_REQUEST.as_u16(),
+                    latency_ms: started.elapsed().as_millis() as u64,
+                    error_summary: &error_summary,
+                },
             );
             return error_response(StatusCode::BAD_REQUEST, AppError::MissingModel.to_string());
         }
@@ -121,17 +138,20 @@ async fn forward_request(
     let provider = match state.provider_registry.get(&resolved.provider) {
         Some(provider) => provider,
         None => {
+            let error_summary = AppError::ProviderNotFound(resolved.provider.clone()).to_string();
             emit_log(
                 &state.log_sink,
-                request_path,
-                &request_id,
-                &original_model,
-                &routed_model,
-                &provider_name,
-                stream_requested,
-                StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
-                started.elapsed().as_millis() as u64,
-                &AppError::ProviderNotFound(resolved.provider.clone()).to_string(),
+                LogContext {
+                    path: request_path,
+                    request_id: &request_id,
+                    original_model: &original_model,
+                    routed_model: &routed_model,
+                    provider: &provider_name,
+                    stream: stream_requested,
+                    status: StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
+                    latency_ms: started.elapsed().as_millis() as u64,
+                    error_summary: &error_summary,
+                },
             );
             return error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -147,15 +167,17 @@ async fn forward_request(
         Err(err) => {
             emit_log(
                 &state.log_sink,
-                request_path,
-                &request_id,
-                &original_model,
-                &routed_model,
-                &provider.name,
-                stream_requested,
-                StatusCode::BAD_REQUEST.as_u16(),
-                started.elapsed().as_millis() as u64,
-                "Failed to serialize upstream body",
+                LogContext {
+                    path: request_path,
+                    request_id: &request_id,
+                    original_model: &original_model,
+                    routed_model: &routed_model,
+                    provider: &provider.name,
+                    stream: stream_requested,
+                    status: StatusCode::BAD_REQUEST.as_u16(),
+                    latency_ms: started.elapsed().as_millis() as u64,
+                    error_summary: "Failed to serialize upstream body",
+                },
             );
             return error_response(
                 StatusCode::BAD_REQUEST,
@@ -188,15 +210,17 @@ async fn forward_request(
         Err(err) => {
             emit_log(
                 &state.log_sink,
-                request_path,
-                &request_id,
-                &original_model,
-                &routed_model,
-                &provider.name,
-                stream_requested,
-                StatusCode::BAD_GATEWAY.as_u16(),
-                started.elapsed().as_millis() as u64,
-                "Failed to reach upstream provider",
+                LogContext {
+                    path: request_path,
+                    request_id: &request_id,
+                    original_model: &original_model,
+                    routed_model: &routed_model,
+                    provider: &provider.name,
+                    stream: stream_requested,
+                    status: StatusCode::BAD_GATEWAY.as_u16(),
+                    latency_ms: started.elapsed().as_millis() as u64,
+                    error_summary: "Failed to reach upstream provider",
+                },
             );
             return error_response(
                 StatusCode::BAD_GATEWAY,
@@ -208,17 +232,20 @@ async fn forward_request(
     let status = upstream_response.status();
 
     if !status.is_success() {
+        let error_summary = format!("Upstream returned HTTP {}", status.as_u16());
         emit_log(
             &state.log_sink,
-            request_path,
-            &request_id,
-            &original_model,
-            &routed_model,
-            &provider.name,
-            stream_requested,
-            status.as_u16(),
-            started.elapsed().as_millis() as u64,
-            &format!("Upstream returned HTTP {}", status.as_u16()),
+            LogContext {
+                path: request_path,
+                request_id: &request_id,
+                original_model: &original_model,
+                routed_model: &routed_model,
+                provider: &provider.name,
+                stream: stream_requested,
+                status: status.as_u16(),
+                latency_ms: started.elapsed().as_millis() as u64,
+                error_summary: &error_summary,
+            },
         );
         return error_response(
             StatusCode::BAD_GATEWAY,
@@ -233,15 +260,17 @@ async fn forward_request(
     if stream_requested && status.is_success() {
         emit_log(
             &state.log_sink,
-            request_path,
-            &request_id,
-            &original_model,
-            &routed_model,
-            &provider.name,
-            true,
-            status.as_u16(),
-            started.elapsed().as_millis() as u64,
-            "",
+            LogContext {
+                path: request_path,
+                request_id: &request_id,
+                original_model: &original_model,
+                routed_model: &routed_model,
+                provider: &provider.name,
+                stream: true,
+                status: status.as_u16(),
+                latency_ms: started.elapsed().as_millis() as u64,
+                error_summary: "",
+            },
         );
         return relay_sse_stream(upstream_response);
     }
@@ -255,15 +284,17 @@ async fn forward_request(
         Err(err) => {
             emit_log(
                 &state.log_sink,
-                request_path,
-                &request_id,
-                &original_model,
-                &routed_model,
-                &provider.name,
-                false,
-                StatusCode::BAD_GATEWAY.as_u16(),
-                started.elapsed().as_millis() as u64,
-                "Failed to read upstream response body",
+                LogContext {
+                    path: request_path,
+                    request_id: &request_id,
+                    original_model: &original_model,
+                    routed_model: &routed_model,
+                    provider: &provider.name,
+                    stream: false,
+                    status: StatusCode::BAD_GATEWAY.as_u16(),
+                    latency_ms: started.elapsed().as_millis() as u64,
+                    error_summary: "Failed to read upstream response body",
+                },
             );
             return error_response(
                 StatusCode::BAD_GATEWAY,
@@ -286,15 +317,17 @@ async fn forward_request(
 
     emit_log(
         &state.log_sink,
-        request_path,
-        &request_id,
-        &original_model,
-        &routed_model,
-        &provider.name,
-        false,
-        status.as_u16(),
-        started.elapsed().as_millis() as u64,
-        "",
+        LogContext {
+            path: request_path,
+            request_id: &request_id,
+            original_model: &original_model,
+            routed_model: &routed_model,
+            provider: &provider.name,
+            stream: false,
+            status: status.as_u16(),
+            latency_ms: started.elapsed().as_millis() as u64,
+            error_summary: "",
+        },
     );
 
     response
@@ -326,30 +359,19 @@ fn build_upstream_url(base_url: &str, upstream_path: &str) -> String {
     format!("{base}{path}")
 }
 
-fn emit_log(
-    log_sink: &RouterLogSink,
-    path: &str,
-    request_id: &str,
-    original_model: &str,
-    routed_model: &str,
-    provider: &str,
-    stream: bool,
-    status: u16,
-    latency_ms: u64,
-    error_summary: &str,
-) {
+fn emit_log(log_sink: &RouterLogSink, ctx: LogContext<'_>) {
     log_sink.emit(RequestLog {
         timestamp: RequestLog::now_timestamp(),
-        request_id: request_id.to_string(),
+        request_id: ctx.request_id.to_string(),
         method: "POST".to_string(),
-        path: path.to_string(),
-        original_model: original_model.to_string(),
-        routed_model: routed_model.to_string(),
-        provider: provider.to_string(),
-        status,
-        latency_ms,
-        stream,
-        error_summary: error_summary.to_string(),
+        path: ctx.path.to_string(),
+        original_model: ctx.original_model.to_string(),
+        routed_model: ctx.routed_model.to_string(),
+        provider: ctx.provider.to_string(),
+        status: ctx.status,
+        latency_ms: ctx.latency_ms,
+        stream: ctx.stream,
+        error_summary: ctx.error_summary.to_string(),
     });
 }
 

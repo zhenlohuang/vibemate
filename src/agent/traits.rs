@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use serde_json::Value;
 
+use crate::config::AppConfig;
 use crate::error::Result;
 
 use super::auth::token::AgentToken;
@@ -25,6 +26,19 @@ pub trait AgentAuthCapability: Send + Sync {
 pub trait AgentUsageCapability: Send + Sync {
     async fn get_usage(&self, token: &AgentToken, client: &reqwest::Client) -> Result<UsageInfo>;
     async fn get_usage_raw(&self, token: &AgentToken, client: &reqwest::Client) -> Result<Value>;
+    async fn get_usage_with_fallback(
+        &self,
+        token: Option<&AgentToken>,
+        client: &reqwest::Client,
+        _config: &AppConfig,
+    ) -> Result<UsageInfo> {
+        let token = token.ok_or_else(|| {
+            crate::error::AppError::NoUsageSources(
+                "No saved OAuth token and no fallback usage source".to_string(),
+            )
+        })?;
+        self.get_usage(token, client).await
+    }
 
     fn process_quota_name(&self, quota_name: &str) -> String {
         quota_name.to_string()

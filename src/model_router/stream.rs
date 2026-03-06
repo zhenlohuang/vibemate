@@ -10,7 +10,7 @@ use tokio_util::io::StreamReader;
 pub fn relay_sse_stream(upstream_response: reqwest::Response) -> Response {
     let stream = upstream_response
         .bytes_stream()
-        .map(|chunk| chunk.map_err(|err| io::Error::new(io::ErrorKind::Other, err)));
+        .map(|chunk| chunk.map_err(io::Error::other));
 
     let reader = StreamReader::new(stream);
     let mut lines = BufReader::new(reader).lines();

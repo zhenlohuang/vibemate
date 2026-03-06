@@ -10,10 +10,15 @@ use url::Url;
 
 use crate::agent::auth::pkce::{generate_challenge, generate_state, generate_verifier};
 use crate::agent::auth::token::{AgentToken, auth_file_path, load_token, save_token};
+use crate::agent::usage_source::codex_cli::CodexCliSource;
+use crate::agent::usage_source::codex_local::CodexLocalSource;
+use crate::agent::usage_source::codex_web::CodexWebSource;
+use crate::agent::usage_source::{UsageFallbackChain, UsageSource};
 use crate::agent::{
     Agent, AgentAuthCapability, AgentDescriptor, AgentIdentity, AgentUsageCapability, UsageInfo,
     UsageWindow,
 };
+use crate::config::{AppConfig, UsageSourceKind};
 use crate::error::{AppError, Result};
 
 pub const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
@@ -285,7 +290,7 @@ fn truncate_for_error(body: &str, max_len: usize) -> String {
 
 pub async fn get_usage(token: &AgentToken, client: &reqwest::Client) -> Result<UsageInfo> {
     let value = get_usage_raw(token, client).await?;
-    Ok(parse_usage(value))
+    Ok(parse_usage_value(value))
 }
 
 pub async fn get_usage_raw(token: &AgentToken, client: &reqwest::Client) -> Result<Value> {
@@ -317,7 +322,7 @@ pub async fn load_saved_token() -> Result<Option<AgentToken>> {
     load_token(&path)
 }
 
-fn parse_usage(value: Value) -> UsageInfo {
+pub fn parse_usage_value(value: Value) -> UsageInfo {
     let plan = value
         .get("plan")
         .and_then(Value::as_str)
@@ -415,6 +420,49 @@ fn parse_usage(value: Value) -> UsageInfo {
         plan,
         windows,
         extra_usage: None,
+        source: Some("oauth".to_string()),
+    }
+}
+
+fn build_usage_chain(config: &AppConfig) -> UsageFallbackChain {
+    let source_config = config.agent_source_config(DESCRIPTOR.id);
+    let mut sources: Vec<Box<dyn UsageSource>> = Vec::new();
+    match source_config.usage_source {
+        UsageSourceKind::Auto => {
+            sources.push(Box::new(OauthSource));
+            sources.push(Box::new(CodexWebSource));
+            sources.push(Box::new(CodexLocalSource::new(source_config)));
+            sources.push(Box::new(CodexCliSource::new(source_config)));
+        }
+        UsageSourceKind::Oauth => sources.push(Box::new(OauthSource)),
+        UsageSourceKind::Web => sources.push(Box::new(CodexWebSource)),
+        UsageSourceKind::Local => sources.push(Box::new(CodexLocalSource::new(source_config))),
+        UsageSourceKind::Cli => sources.push(Box::new(CodexCliSource::new(source_config))),
+    }
+    UsageFallbackChain::new(sources)
+}
+
+struct OauthSource;
+
+#[async_trait]
+impl UsageSource for OauthSource {
+    fn kind(&self) -> UsageSourceKind {
+        UsageSourceKind::Oauth
+    }
+
+    async fn is_available(&self) -> bool {
+        true
+    }
+
+    async fn fetch_usage(
+        &self,
+        token: Option<&AgentToken>,
+        client: &reqwest::Client,
+    ) -> Result<UsageInfo> {
+        let token = token.ok_or_else(|| {
+            AppError::NoUsageSources("Codex OAuth token is not available".to_string())
+        })?;
+        get_usage(token, client).await
     }
 }
 
@@ -461,6 +509,15 @@ impl AgentUsageCapability for CodexAgent {
 
     async fn get_usage_raw(&self, token: &AgentToken, client: &reqwest::Client) -> Result<Value> {
         get_usage_raw(token, client).await
+    }
+
+    async fn get_usage_with_fallback(
+        &self,
+        token: Option<&AgentToken>,
+        client: &reqwest::Client,
+        config: &AppConfig,
+    ) -> Result<UsageInfo> {
+        build_usage_chain(config).fetch_usage(token, client).await
     }
 
     fn process_quota_name(&self, quota_name: &str) -> String {
@@ -536,11 +593,10 @@ fn parse_window_with_extra(
         "primary_window",
         "secondary_window",
     ] {
-        if let Some(nested) = value.get(nested_key) {
-            if let Some(window) = parse_window_with_extra(name, nested, is_extra, source_limit_name)
-            {
-                return Some(window);
-            }
+        if let Some(nested) = value.get(nested_key)
+            && let Some(window) = parse_window_with_extra(name, nested, is_extra, source_limit_name)
+        {
+            return Some(window);
         }
     }
 
@@ -588,17 +644,17 @@ fn parse_utilization_pct(value: &Value) -> Option<f64> {
         ],
     );
     let limit = parse_number_fields(value, &["limit", "max", "total", "allowance", "quota"]);
-    if let (Some(used), Some(limit)) = (used, limit) {
-        if limit > 0.0 {
-            return Some((used / limit) * 100.0);
-        }
+    if let (Some(used), Some(limit)) = (used, limit)
+        && limit > 0.0
+    {
+        return Some((used / limit) * 100.0);
     }
 
     let remaining = parse_number_fields(value, &["remaining", "left", "available"]);
-    if let (Some(remaining), Some(limit)) = (remaining, limit) {
-        if limit > 0.0 {
-            return Some(((limit - remaining) / limit) * 100.0);
-        }
+    if let (Some(remaining), Some(limit)) = (remaining, limit)
+        && limit > 0.0
+    {
+        return Some(((limit - remaining) / limit) * 100.0);
     }
 
     None
@@ -610,10 +666,10 @@ fn parse_number_fields(value: &Value, keys: &[&str]) -> Option<f64> {
             if let Some(n) = v.as_f64() {
                 return Some(n);
             }
-            if let Some(s) = v.as_str() {
-                if let Ok(n) = s.parse::<f64>() {
-                    return Some(n);
-                }
+            if let Some(s) = v.as_str()
+                && let Ok(n) = s.parse::<f64>()
+            {
+                return Some(n);
             }
         }
     }
@@ -636,10 +692,10 @@ fn parse_string_fields(value: &Value, keys: &[&str]) -> Option<String> {
                 return Some(ts.to_string());
             }
             if let Some(ts) = field.as_u64() {
-                if let Ok(ts_i64) = i64::try_from(ts) {
-                    if let Some(dt) = chrono::DateTime::<Utc>::from_timestamp(ts_i64, 0) {
-                        return Some(dt.to_rfc3339());
-                    }
+                if let Ok(ts_i64) = i64::try_from(ts)
+                    && let Some(dt) = chrono::DateTime::<Utc>::from_timestamp(ts_i64, 0)
+                {
+                    return Some(dt.to_rfc3339());
                 }
                 return Some(ts.to_string());
             }
@@ -720,7 +776,7 @@ mod tests {
     use crate::agent::auth::callback::CallbackPayload;
     use crate::error::AppError;
 
-    use super::{parse_usage, wait_for_callback_with_timeout};
+    use super::{parse_usage_value, wait_for_callback_with_timeout};
 
     #[tokio::test]
     async fn wait_for_callback_with_timeout_returns_payload() {
@@ -776,7 +832,7 @@ mod tests {
             }
         });
 
-        let usage = parse_usage(value);
+        let usage = parse_usage_value(value);
         assert_eq!(usage.plan.as_deref(), Some("plus"));
         assert_eq!(usage.windows.len(), 1);
         assert_eq!(usage.windows[0].name, "five-hour");
@@ -796,7 +852,7 @@ mod tests {
             }
         });
 
-        let usage = parse_usage(value);
+        let usage = parse_usage_value(value);
         assert_eq!(usage.plan.as_deref(), Some("plus"));
         assert_eq!(usage.windows.len(), 1);
         assert_eq!(usage.windows[0].name, "seven-day");
@@ -814,7 +870,7 @@ mod tests {
             }
         });
 
-        let usage = parse_usage(value);
+        let usage = parse_usage_value(value);
         assert_eq!(usage.plan.as_deref(), Some("plus"));
         assert_eq!(usage.windows.len(), 1);
         assert_eq!(usage.windows[0].name, "five-hour");
@@ -834,7 +890,7 @@ mod tests {
             }
         });
 
-        let usage = parse_usage(value);
+        let usage = parse_usage_value(value);
         assert_eq!(usage.plan.as_deref(), Some("plus"));
         let five_hour = usage
             .windows
@@ -854,7 +910,7 @@ mod tests {
             }
         });
 
-        let usage = parse_usage(value);
+        let usage = parse_usage_value(value);
         assert_eq!(usage.plan.as_deref(), Some("plus"));
         let five_hour = usage
             .windows
@@ -895,7 +951,7 @@ mod tests {
             ]
         });
 
-        let usage = parse_usage(value);
+        let usage = parse_usage_value(value);
         assert_eq!(usage.plan.as_deref(), Some("plus"));
         assert!(usage.windows.iter().any(|w| {
             w.name == "five-hour"
@@ -935,7 +991,7 @@ mod tests {
             ]
         });
 
-        let usage = parse_usage(value);
+        let usage = parse_usage_value(value);
         assert!(usage.windows.is_empty());
     }
 }

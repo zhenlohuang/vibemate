@@ -9,10 +9,15 @@ use serde_json::Value;
 
 use crate::agent::auth::pkce::{generate_challenge, generate_state, generate_verifier};
 use crate::agent::auth::token::{AgentToken, auth_file_path, load_token, save_token};
+use crate::agent::usage_source::claude_cli::ClaudeCliSource;
+use crate::agent::usage_source::claude_local::ClaudeLocalSource;
+use crate::agent::usage_source::claude_web::ClaudeWebSource;
+use crate::agent::usage_source::{UsageFallbackChain, UsageSource};
 use crate::agent::{
     Agent, AgentAuthCapability, AgentDescriptor, AgentIdentity, AgentUsageCapability, UsageInfo,
     UsageWindow,
 };
+use crate::config::{AppConfig, UsageSourceKind};
 use crate::error::{AppError, Result};
 
 pub const CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
@@ -202,21 +207,22 @@ pub async fn refresh_if_needed(token: &mut AgentToken, client: &reqwest::Client)
 
 pub async fn get_usage(token: &AgentToken, client: &reqwest::Client) -> Result<UsageInfo> {
     let value = get_usage_raw(token, client).await?;
-    parse_usage(value)
+    parse_usage_value(value)
 }
 
-fn parse_usage(value: Value) -> Result<UsageInfo> {
+pub fn parse_usage_value(value: Value) -> Result<UsageInfo> {
     let usage: ClaudeUsageResponse = serde_json::from_value(value)?;
     let extra_usage = usage.extra_usage.clone();
     let mut windows = Vec::new();
-    for maybe_window in [
+    for window in [
         usage_window("five-hour", usage.five_hour),
         usage_window("seven-day", usage.seven_day),
         usage_window("seven-day-opus", usage.seven_day_opus),
-    ] {
-        if let Some(window) = maybe_window {
-            windows.push(window);
-        }
+    ]
+    .into_iter()
+    .flatten()
+    {
+        windows.push(window);
     }
 
     if let Some(extra) = usage.extra_usage {
@@ -229,16 +235,63 @@ fn parse_usage(value: Value) -> Result<UsageInfo> {
         plan: None,
         windows,
         extra_usage,
+        source: Some("oauth".to_string()),
     })
+}
+
+fn build_usage_chain(config: &AppConfig) -> UsageFallbackChain {
+    let source_config = config.agent_source_config(DESCRIPTOR.id);
+    let mut sources: Vec<Box<dyn UsageSource>> = Vec::new();
+    match source_config.usage_source {
+        UsageSourceKind::Auto => {
+            sources.push(Box::new(OauthSource));
+            sources.push(Box::new(ClaudeLocalSource::new(source_config)));
+            sources.push(Box::new(ClaudeWebSource {
+                cookie_browser: source_config.cookie_browser.clone(),
+            }));
+            sources.push(Box::new(ClaudeCliSource::new(source_config)));
+        }
+        UsageSourceKind::Oauth => sources.push(Box::new(OauthSource)),
+        UsageSourceKind::Local => sources.push(Box::new(ClaudeLocalSource::new(source_config))),
+        UsageSourceKind::Web => sources.push(Box::new(ClaudeWebSource {
+            cookie_browser: source_config.cookie_browser.clone(),
+        })),
+        UsageSourceKind::Cli => sources.push(Box::new(ClaudeCliSource::new(source_config))),
+    }
+    UsageFallbackChain::new(sources)
+}
+
+struct OauthSource;
+
+#[async_trait]
+impl UsageSource for OauthSource {
+    fn kind(&self) -> UsageSourceKind {
+        UsageSourceKind::Oauth
+    }
+
+    async fn is_available(&self) -> bool {
+        true
+    }
+
+    async fn fetch_usage(
+        &self,
+        token: Option<&AgentToken>,
+        client: &reqwest::Client,
+    ) -> Result<UsageInfo> {
+        let token = token.ok_or_else(|| {
+            AppError::NoUsageSources("Claude OAuth token is not available".to_string())
+        })?;
+        get_usage(token, client).await
+    }
 }
 
 fn merge_extra_usage_windows(windows: &mut Vec<UsageWindow>, extra: &Value) {
     let mut seen: HashSet<String> = windows.iter().map(|w| w.name.clone()).collect();
 
-    if let Some(window) = parse_extra_window("extra-usage", extra) {
-        if seen.insert(window.name.clone()) {
-            windows.push(window);
-        }
+    if let Some(window) = parse_extra_window("extra-usage", extra)
+        && seen.insert(window.name.clone())
+    {
+        windows.push(window);
     }
 
     if let Some(items) = extra.as_array() {
@@ -270,23 +323,22 @@ fn collect_extra_windows(
     windows: &mut Vec<UsageWindow>,
     seen: &mut HashSet<String>,
 ) {
-    if let Some(window) = parse_extra_window(base_name, value) {
-        if seen.insert(window.name.clone()) {
-            windows.push(window);
-        }
+    if let Some(window) = parse_extra_window(base_name, value)
+        && seen.insert(window.name.clone())
+    {
+        windows.push(window);
     }
 
     match value {
         Value::Object(map) => {
             for (key, child) in map {
                 let normalized_key = normalize_name(key);
-                let child_name = if is_passthrough_extra_key(&normalized_key) {
-                    base_name.to_string()
-                } else if normalized_key.is_empty() {
-                    base_name.to_string()
-                } else {
-                    format!("{base_name}-{normalized_key}")
-                };
+                let child_name =
+                    if is_passthrough_extra_key(&normalized_key) || normalized_key.is_empty() {
+                        base_name.to_string()
+                    } else {
+                        format!("{base_name}-{normalized_key}")
+                    };
                 collect_extra_windows(child, &child_name, windows, seen);
             }
         }
@@ -370,10 +422,10 @@ fn parse_number_raw(value: &Value, keys: &[&str]) -> Option<f64> {
             if let Some(n) = v.as_f64() {
                 return Some(n);
             }
-            if let Some(s) = v.as_str() {
-                if let Ok(n) = s.parse::<f64>() {
-                    return Some(n);
-                }
+            if let Some(s) = v.as_str()
+                && let Ok(n) = s.parse::<f64>()
+            {
+                return Some(n);
             }
         }
     }
@@ -425,17 +477,17 @@ fn parse_utilization_pct(value: &Value, keys: &[&str]) -> Option<f64> {
             "monthly_limit",
         ],
     );
-    if let (Some(used), Some(limit)) = (used, limit) {
-        if limit > 0.0 {
-            return Some((used / limit) * 100.0);
-        }
+    if let (Some(used), Some(limit)) = (used, limit)
+        && limit > 0.0
+    {
+        return Some((used / limit) * 100.0);
     }
 
     let remaining = parse_number_raw(value, &["remaining", "left", "available"]);
-    if let (Some(remaining), Some(limit)) = (remaining, limit) {
-        if limit > 0.0 {
-            return Some(((limit - remaining) / limit) * 100.0);
-        }
+    if let (Some(remaining), Some(limit)) = (remaining, limit)
+        && limit > 0.0
+    {
+        return Some(((limit - remaining) / limit) * 100.0);
     }
 
     None
@@ -444,44 +496,40 @@ fn parse_utilization_pct(value: &Value, keys: &[&str]) -> Option<f64> {
 fn parse_string(value: &Value, keys: &[&str]) -> Option<String> {
     for key in keys {
         if let Some(field) = value.get(*key) {
-            if let Some(seconds) = field.as_i64() {
-                if key.ends_with("after_seconds")
+            if let Some(seconds) = field.as_i64()
+                && (key.ends_with("after_seconds")
                     || key.ends_with("after")
-                    || key.ends_with("until_reset")
-                {
-                    let ts = Utc::now().timestamp().saturating_add(seconds);
-                    if let Some(dt) = chrono::DateTime::<Utc>::from_timestamp(ts, 0) {
-                        return Some(dt.to_rfc3339());
-                    }
+                    || key.ends_with("until_reset"))
+            {
+                let ts = Utc::now().timestamp().saturating_add(seconds);
+                if let Some(dt) = chrono::DateTime::<Utc>::from_timestamp(ts, 0) {
+                    return Some(dt.to_rfc3339());
                 }
             }
-            if let Some(seconds) = field.as_u64() {
-                if key.ends_with("after_seconds")
+            if let Some(seconds) = field.as_u64()
+                && (key.ends_with("after_seconds")
                     || key.ends_with("after")
-                    || key.ends_with("until_reset")
-                {
-                    if let Ok(sec_i64) = i64::try_from(seconds) {
-                        let ts = Utc::now().timestamp().saturating_add(sec_i64);
-                        if let Some(dt) = chrono::DateTime::<Utc>::from_timestamp(ts, 0) {
-                            return Some(dt.to_rfc3339());
-                        }
-                    }
+                    || key.ends_with("until_reset"))
+                && let Ok(sec_i64) = i64::try_from(seconds)
+            {
+                let ts = Utc::now().timestamp().saturating_add(sec_i64);
+                if let Some(dt) = chrono::DateTime::<Utc>::from_timestamp(ts, 0) {
+                    return Some(dt.to_rfc3339());
                 }
             }
             if let Some(s) = field.as_str() {
                 return Some(s.to_string());
             }
-            if let Some(ts) = field.as_i64() {
-                if let Some(dt) = chrono::DateTime::<Utc>::from_timestamp(ts, 0) {
-                    return Some(dt.to_rfc3339());
-                }
+            if let Some(ts) = field.as_i64()
+                && let Some(dt) = chrono::DateTime::<Utc>::from_timestamp(ts, 0)
+            {
+                return Some(dt.to_rfc3339());
             }
-            if let Some(ts) = field.as_u64() {
-                if let Ok(ts_i64) = i64::try_from(ts) {
-                    if let Some(dt) = chrono::DateTime::<Utc>::from_timestamp(ts_i64, 0) {
-                        return Some(dt.to_rfc3339());
-                    }
-                }
+            if let Some(ts) = field.as_u64()
+                && let Ok(ts_i64) = i64::try_from(ts)
+                && let Some(dt) = chrono::DateTime::<Utc>::from_timestamp(ts_i64, 0)
+            {
+                return Some(dt.to_rfc3339());
             }
         }
     }
@@ -567,6 +615,15 @@ impl AgentUsageCapability for ClaudeAgent {
         get_usage_raw(token, client).await
     }
 
+    async fn get_usage_with_fallback(
+        &self,
+        token: Option<&AgentToken>,
+        client: &reqwest::Client,
+        config: &AppConfig,
+    ) -> Result<UsageInfo> {
+        build_usage_chain(config).fetch_usage(token, client).await
+    }
+
     fn process_quota_name(&self, quota_name: &str) -> String {
         const DISPLAY_NAME_MAP: [(&str, &str); 3] = [
             ("five-hour", "Session"),
@@ -585,7 +642,7 @@ impl AgentUsageCapability for ClaudeAgent {
 mod tests {
     use serde_json::json;
 
-    use super::parse_usage;
+    use super::parse_usage_value;
 
     #[test]
     fn parse_usage_includes_extra_usage_object() {
@@ -598,7 +655,7 @@ mod tests {
             }
         });
 
-        let usage = parse_usage(value).expect("parse should succeed");
+        let usage = parse_usage_value(value).expect("parse should succeed");
         assert!(
             usage
                 .windows
@@ -618,7 +675,7 @@ mod tests {
             }
         });
 
-        let usage = parse_usage(value).expect("parse should succeed");
+        let usage = parse_usage_value(value).expect("parse should succeed");
         assert!(usage.windows.iter().any(|w| {
             w.name == "sonnet-4"
                 && (w.utilization_pct - 30.0).abs() < 0.0001
@@ -639,7 +696,7 @@ mod tests {
             }
         });
 
-        let usage = parse_usage(value).expect("parse should succeed");
+        let usage = parse_usage_value(value).expect("parse should succeed");
         let extra = usage
             .windows
             .iter()
@@ -658,7 +715,7 @@ mod tests {
             "seven_day_opus": null
         });
 
-        let usage = parse_usage(value).expect("parse should succeed");
+        let usage = parse_usage_value(value).expect("parse should succeed");
         let five_hour = usage
             .windows
             .iter()
@@ -676,7 +733,7 @@ mod tests {
             "seven_day_opus": null
         });
 
-        let usage = parse_usage(value).expect("parse should succeed");
+        let usage = parse_usage_value(value).expect("parse should succeed");
         let five_hour = usage
             .windows
             .iter()

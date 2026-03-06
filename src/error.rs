@@ -20,6 +20,18 @@ pub enum AppError {
     #[error("OAuth error: {0}")]
     OAuth(String),
 
+    #[error("CLI subprocess error: {0}")]
+    CliSubprocess(String),
+
+    #[error("Cookie extraction error: {0}")]
+    CookieExtraction(String),
+
+    #[error("Local usage scan error: {0}")]
+    LocalScan(String),
+
+    #[error("No usage sources available: {0}")]
+    NoUsageSources(String),
+
     #[error("Token expired for {agent}. Please run `vibemate login {agent}`")]
     TokenExpired { agent: String },
 

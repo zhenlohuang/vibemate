@@ -135,29 +135,29 @@ async fn run_dashboard_loop(
             app.status_message = update.message;
         }
 
-        if let Some(task) = router_task.as_mut() {
-            if task.is_finished() {
-                app.router_running = false;
-                let result = task.await;
-                router_task = None;
+        if let Some(task) = router_task.as_mut()
+            && task.is_finished()
+        {
+            app.router_running = false;
+            let result = task.await;
+            router_task = None;
 
-                let detail = match result {
-                    Ok(Ok(())) => "router task stopped".to_string(),
-                    Ok(Err(err)) => format!("router task error: {err}"),
-                    Err(err) => format!("router task join error: {err}"),
-                };
+            let detail = match result {
+                Ok(Ok(())) => "router task stopped".to_string(),
+                Ok(Err(err)) => format!("router task error: {err}"),
+                Err(err) => format!("router task join error: {err}"),
+            };
 
-                match &log_mode {
-                    DashboardLogMode::Memory => {
-                        app.log_source_note = Some(format!(
-                            "{detail}; no available log source (memory mode requires embedded router)"
-                        ));
-                    }
-                    DashboardLogMode::File { .. } => {
-                        app.log_source_note = Some(format!(
-                            "{detail}; continuing in file-tail mode for external router logs"
-                        ));
-                    }
+            match &log_mode {
+                DashboardLogMode::Memory => {
+                    app.log_source_note = Some(format!(
+                        "{detail}; no available log source (memory mode requires embedded router)"
+                    ));
+                }
+                DashboardLogMode::File { .. } => {
+                    app.log_source_note = Some(format!(
+                        "{detail}; continuing in file-tail mode for external router logs"
+                    ));
                 }
             }
         }
@@ -448,6 +448,82 @@ async fn tail_file_logs(path: PathBuf, max_files: u32, log_event_tx: mpsc::Sende
     }
 }
 
+async fn collect_usage(config: &AppConfig, show_extra_quota: bool) -> UsageUpdate {
+    let registry = global_agent_registry();
+    let mut usage = Vec::new();
+    let mut errors = Vec::new();
+    let client = match config.system.build_http_client() {
+        Ok(client) => client,
+        Err(err) => {
+            return UsageUpdate {
+                usage,
+                message: Some(format!("http client build error: {err}")),
+            };
+        }
+    };
+
+    for agent_impl in registry.iter() {
+        let agent_id = agent_impl.descriptor().id;
+        let Some(auth) = agent_impl.auth_capability() else {
+            errors.push(format!("{agent_id} capability missing: auth"));
+            continue;
+        };
+        let Some(usage_capability) = agent_impl.usage_capability() else {
+            errors.push(format!("{agent_id} capability missing: usage"));
+            continue;
+        };
+
+        let mut saved_token = None;
+        match auth.load_saved_token().await {
+            Ok(Some(mut token)) => {
+                match auth.refresh_if_needed(&mut token, &client).await {
+                    Ok(()) => {
+                        let path = match auth_file_path(agent_impl.descriptor().token_file_name) {
+                            Ok(path) => path,
+                            Err(err) => {
+                                errors.push(format!("token directory error: {err}"));
+                                return UsageUpdate {
+                                    usage,
+                                    message: Some(errors.join(" | ")),
+                                };
+                            }
+                        };
+                        if let Err(err) = save_token(&path, &token) {
+                            errors.push(format!("{agent_id} token save error: {err}"));
+                        }
+                    }
+                    Err(err) => errors.push(format!("{agent_id} refresh error: {err}")),
+                }
+                saved_token = Some(token);
+            }
+            Ok(None) => {}
+            Err(err) => errors.push(format!("{agent_id} token load error: {err}")),
+        }
+
+        match usage_capability
+            .get_usage_with_fallback(saved_token.as_ref(), &client, config)
+            .await
+        {
+            Ok(info) => usage.push(info),
+            Err(err) => errors.push(format!("{agent_id} usage error: {err}")),
+        }
+    }
+
+    let message = if errors.is_empty() {
+        None
+    } else {
+        Some(errors.join(" | "))
+    };
+
+    if !show_extra_quota {
+        for info in &mut usage {
+            info.windows.retain(|window| !window.is_extra);
+        }
+    }
+
+    UsageUpdate { usage, message }
+}
+
 #[cfg(test)]
 mod tests {
     use ratatui::layout::Rect;
@@ -491,73 +567,4 @@ mod tests {
         assert!(!point_in_rect(9, 5, area));
         assert!(!point_in_rect(10, 11, area));
     }
-}
-
-async fn collect_usage(config: &AppConfig, show_extra_quota: bool) -> UsageUpdate {
-    let registry = global_agent_registry();
-    let mut usage = Vec::new();
-    let mut errors = Vec::new();
-    let client = match config.system.build_http_client() {
-        Ok(client) => client,
-        Err(err) => {
-            return UsageUpdate {
-                usage,
-                message: Some(format!("http client build error: {err}")),
-            };
-        }
-    };
-
-    for agent_impl in registry.iter() {
-        let agent_id = agent_impl.descriptor().id;
-        let Some(auth) = agent_impl.auth_capability() else {
-            errors.push(format!("{agent_id} capability missing: auth"));
-            continue;
-        };
-        let Some(usage_capability) = agent_impl.usage_capability() else {
-            errors.push(format!("{agent_id} capability missing: usage"));
-            continue;
-        };
-
-        match auth.load_saved_token().await {
-            Ok(Some(mut token)) => {
-                if let Err(err) = auth.refresh_if_needed(&mut token, &client).await {
-                    errors.push(format!("{agent_id} refresh error: {err}"));
-                } else {
-                    let path = match auth_file_path(agent_impl.descriptor().token_file_name) {
-                        Ok(path) => path,
-                        Err(err) => {
-                            errors.push(format!("token directory error: {err}"));
-                            return UsageUpdate {
-                                usage,
-                                message: Some(errors.join(" | ")),
-                            };
-                        }
-                    };
-                    if let Err(err) = save_token(&path, &token) {
-                        errors.push(format!("{agent_id} token save error: {err}"));
-                    }
-                    match usage_capability.get_usage(&token, &client).await {
-                        Ok(info) => usage.push(info),
-                        Err(err) => errors.push(format!("{agent_id} usage error: {err}")),
-                    }
-                }
-            }
-            Ok(None) => {}
-            Err(err) => errors.push(format!("{agent_id} token load error: {err}")),
-        }
-    }
-
-    let message = if errors.is_empty() {
-        None
-    } else {
-        Some(errors.join(" | "))
-    };
-
-    if !show_extra_quota {
-        for info in &mut usage {
-            info.windows.retain(|window| !window.is_extra);
-        }
-    }
-
-    UsageUpdate { usage, message }
 }

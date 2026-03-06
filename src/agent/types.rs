@@ -8,6 +8,7 @@ pub struct UsageInfo {
     pub plan: Option<String>,
     pub windows: Vec<UsageWindow>,
     pub extra_usage: Option<Value>,
+    pub source: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]

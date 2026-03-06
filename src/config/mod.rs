@@ -1,6 +1,9 @@
 mod types;
 
-pub use types::{AppConfig, RouterConfig, RouterLoggingConfig, RoutingRule};
+pub use types::{
+    AgentSourceConfig, AppConfig, RouterConfig, RouterLoggingConfig, RoutingRule, UsageSourceKind,
+    validate_agent_usage_source,
+};
 
 use crate::error::{AppError, Result};
 use std::fs;
@@ -37,6 +40,29 @@ max_files = 3
 show_extra_quota = false
 # Usage polling interval for dashboard in seconds (default 300s = 5min)
 usage_refresh_interval_secs = 300
+
+[agents.codex]
+# auto | oauth | web | cli | local
+usage_source = "auto"
+# cli_path = "/opt/homebrew/bin/codex"
+# session_dir = "~/.codex/sessions"
+
+[agents.claude]
+# auto | oauth | web | cli | local
+usage_source = "auto"
+# cli_path = "/opt/homebrew/bin/claude"
+# session_dir = "~/.claude/projects"
+# cookie_browser = "chrome"
+
+[agents.cursor]
+# auto | oauth | web
+usage_source = "auto"
+# cookie_browser = "chrome"
+
+[agents.gemini]
+# auto | oauth | local
+usage_source = "auto"
+# session_dir = "~/.gemini"
 
 # Provider definitions map provider names to base URLs + auth headers.
 # `api_key` will auto-generate `Authorization = "Bearer <api_key>"`.
@@ -80,6 +106,7 @@ pub fn load_config(path: &Path) -> Result<AppConfig> {
     let resolved_path = ensure_config_initialized(path)?;
     let raw = fs::read_to_string(&resolved_path)?;
     let config = toml::from_str::<AppConfig>(&raw)?;
+    config.validate()?;
     Ok(config)
 }
 
@@ -93,16 +120,16 @@ fn ensure_vibemate_dir() -> Result<PathBuf> {
 
 pub fn expand_tilde(path: &Path) -> PathBuf {
     let raw = path.to_string_lossy();
-    if raw == "~" {
-        if let Some(home) = dirs::home_dir() {
-            return home;
-        }
+    if raw == "~"
+        && let Some(home) = dirs::home_dir()
+    {
+        return home;
     }
 
-    if let Some(suffix) = raw.strip_prefix("~/") {
-        if let Some(home) = dirs::home_dir() {
-            return home.join(suffix);
-        }
+    if let Some(suffix) = raw.strip_prefix("~/")
+        && let Some(home) = dirs::home_dir()
+    {
+        return home.join(suffix);
     }
 
     path.to_path_buf()

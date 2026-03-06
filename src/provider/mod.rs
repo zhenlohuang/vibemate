@@ -89,6 +89,6 @@ headers = { authorization = "Token preset" }
             provider.headers.get("authorization"),
             Some(&"Token preset".to_string())
         );
-        assert!(provider.headers.get("Authorization").is_none());
+        assert!(!provider.headers.contains_key("Authorization"));
     }
 }

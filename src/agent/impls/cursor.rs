@@ -7,10 +7,13 @@ use reqwest::header::COOKIE;
 use serde_json::Value;
 
 use crate::agent::auth::token::{AgentToken, auth_file_path, load_token, save_token};
+use crate::agent::usage_source::cursor_web::CursorWebSource;
+use crate::agent::usage_source::{UsageFallbackChain, UsageSource};
 use crate::agent::{
     Agent, AgentAuthCapability, AgentDescriptor, AgentIdentity, AgentUsageCapability, UsageInfo,
     UsageWindow,
 };
+use crate::config::{AppConfig, UsageSourceKind, validate_agent_usage_source};
 use crate::error::{AppError, Result};
 
 const AUTH_ME_URL: &str = "https://cursor.com/api/auth/me";
@@ -69,7 +72,7 @@ pub async fn refresh_if_needed(_token: &mut AgentToken, _client: &reqwest::Clien
 
 pub async fn get_usage(token: &AgentToken, client: &reqwest::Client) -> Result<UsageInfo> {
     let value = get_usage_raw(token, client).await?;
-    Ok(parse_usage(value))
+    Ok(parse_usage_value(value))
 }
 
 pub async fn get_usage_raw(token: &AgentToken, client: &reqwest::Client) -> Result<Value> {
@@ -125,7 +128,7 @@ async fn validate_cookie(cookie: &str, client: &reqwest::Client) -> Result<()> {
     Ok(())
 }
 
-fn parse_usage(value: Value) -> UsageInfo {
+pub fn parse_usage_value(value: Value) -> UsageInfo {
     let plan = value
         .get("membershipType")
         .or_else(|| value.get("plan"))
@@ -142,6 +145,51 @@ fn parse_usage(value: Value) -> UsageInfo {
         plan,
         windows,
         extra_usage: None,
+        source: Some("oauth".to_string()),
+    }
+}
+
+fn build_usage_chain(config: &AppConfig) -> Result<UsageFallbackChain> {
+    let source_config = config.agent_source_config(DESCRIPTOR.id);
+    validate_agent_usage_source(DESCRIPTOR.id, source_config.usage_source)?;
+    let mut sources: Vec<Box<dyn UsageSource>> = Vec::new();
+    match source_config.usage_source {
+        UsageSourceKind::Auto => {
+            sources.push(Box::new(OauthSource));
+            sources.push(Box::new(CursorWebSource {
+                cookie_browser: source_config.cookie_browser.clone(),
+            }));
+        }
+        UsageSourceKind::Oauth => sources.push(Box::new(OauthSource)),
+        UsageSourceKind::Web => sources.push(Box::new(CursorWebSource {
+            cookie_browser: source_config.cookie_browser.clone(),
+        })),
+        UsageSourceKind::Cli | UsageSourceKind::Local => unreachable!(),
+    }
+    Ok(UsageFallbackChain::new(sources))
+}
+
+struct OauthSource;
+
+#[async_trait]
+impl UsageSource for OauthSource {
+    fn kind(&self) -> UsageSourceKind {
+        UsageSourceKind::Oauth
+    }
+
+    async fn is_available(&self) -> bool {
+        true
+    }
+
+    async fn fetch_usage(
+        &self,
+        token: Option<&AgentToken>,
+        client: &reqwest::Client,
+    ) -> Result<UsageInfo> {
+        let token = token.ok_or_else(|| {
+            AppError::NoUsageSources("Cursor saved session token is not available".to_string())
+        })?;
+        get_usage(token, client).await
     }
 }
 
@@ -410,6 +458,15 @@ impl AgentUsageCapability for CursorAgent {
         get_usage_raw(token, client).await
     }
 
+    async fn get_usage_with_fallback(
+        &self,
+        token: Option<&AgentToken>,
+        client: &reqwest::Client,
+        config: &AppConfig,
+    ) -> Result<UsageInfo> {
+        build_usage_chain(config)?.fetch_usage(token, client).await
+    }
+
     fn process_quota_name(&self, quota_name: &str) -> String {
         humanize_quota_name(quota_name)
     }
@@ -419,7 +476,7 @@ impl AgentUsageCapability for CursorAgent {
 mod tests {
     use serde_json::json;
 
-    use super::{humanize_quota_name, parse_usage};
+    use super::{humanize_quota_name, parse_usage_value};
 
     #[test]
     fn parse_usage_supports_num_requests_pattern() {
@@ -429,7 +486,7 @@ mod tests {
             "gpt4": { "numRequests": 25, "maxRequestUsage": 100 }
         });
 
-        let usage = parse_usage(value);
+        let usage = parse_usage_value(value);
         assert_eq!(usage.plan.as_deref(), Some("pro"));
         assert_eq!(usage.windows.len(), 1);
         assert_eq!(usage.windows[0].name, "gpt4");
@@ -442,7 +499,7 @@ mod tests {
 
     #[test]
     fn parse_usage_handles_empty_response() {
-        let usage = parse_usage(json!({}));
+        let usage = parse_usage_value(json!({}));
         assert!(usage.plan.is_none());
         assert!(usage.windows.is_empty());
     }
@@ -454,7 +511,7 @@ mod tests {
             "gpt4": { "numRequests": 7, "maxRequestUsage": 0 }
         });
 
-        let usage = parse_usage(value);
+        let usage = parse_usage_value(value);
         assert!(usage.windows.is_empty());
     }
 
@@ -468,7 +525,7 @@ mod tests {
             "windows": ["not-an-object"]
         });
 
-        let usage = parse_usage(value);
+        let usage = parse_usage_value(value);
         assert_eq!(usage.plan.as_deref(), Some("hobby"));
         assert!(usage.windows.is_empty());
     }
@@ -502,7 +559,7 @@ mod tests {
             }
         });
 
-        let usage = parse_usage(value);
+        let usage = parse_usage_value(value);
         assert_eq!(usage.plan.as_deref(), Some("enterprise"));
         assert_eq!(usage.windows.len(), 2);
 
@@ -547,7 +604,7 @@ mod tests {
             }
         });
 
-        let usage = parse_usage(value);
+        let usage = parse_usage_value(value);
         assert_eq!(usage.plan.as_deref(), Some("pro"));
         assert_eq!(usage.windows.len(), 2);
         assert!(

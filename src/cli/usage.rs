@@ -38,6 +38,7 @@ struct UsageJsonAgent {
     agent_name: String,
     display_name: String,
     plan: Option<String>,
+    source: Option<String>,
     quotas: Vec<UsageJsonQuota>,
     extra_quotas: Vec<UsageJsonQuota>,
 }
@@ -68,7 +69,7 @@ pub async fn run(config: &AppConfig, options: UsageOptions) -> Result<()> {
 
     for agent_impl in registry
         .iter()
-        .filter(|agent| target_agent.map_or(true, |id| agent.descriptor().id == id))
+        .filter(|agent| target_agent.is_none_or(|id| agent.descriptor().id == id))
     {
         let agent_id = agent_impl.descriptor().id;
         let Some(auth) = agent_impl.auth_capability() else {
@@ -80,38 +81,45 @@ pub async fn run(config: &AppConfig, options: UsageOptions) -> Result<()> {
             continue;
         };
 
+        let mut saved_token = None;
         match auth.load_saved_token().await {
             Ok(Some(mut token)) => {
                 found_any_token = true;
-                if let Err(err) = auth.refresh_if_needed(&mut token, &client).await {
-                    errors.push(format!("{agent_id} refresh error: {err}"));
-                } else {
-                    match auth_file_path(agent_impl.descriptor().token_file_name) {
+                match auth.refresh_if_needed(&mut token, &client).await {
+                    Ok(()) => match auth_file_path(agent_impl.descriptor().token_file_name) {
                         Ok(path) => {
                             if let Err(err) = save_token(&path, &token) {
                                 errors.push(format!("{agent_id} token save error: {err}"));
                             }
                         }
                         Err(err) => errors.push(format!("{agent_id} token path error: {err}")),
-                    }
-
-                    if options.raw {
-                        match usage_capability.get_usage_raw(&token, &client).await {
-                            Ok(value) => {
-                                raw_results.insert(agent_id.to_string(), value);
-                            }
-                            Err(err) => errors.push(format!("{agent_id} usage error: {err}")),
-                        }
-                    } else {
-                        match usage_capability.get_usage(&token, &client).await {
-                            Ok(info) => usage_results.push(info),
-                            Err(err) => errors.push(format!("{agent_id} usage error: {err}")),
-                        }
-                    }
+                    },
+                    Err(err) => errors.push(format!("{agent_id} refresh error: {err}")),
                 }
+                saved_token = Some(token);
             }
             Ok(None) => {}
             Err(err) => errors.push(format!("{agent_id} token load error: {err}")),
+        }
+
+        if options.raw {
+            let Some(token) = saved_token.as_ref() else {
+                continue;
+            };
+            match usage_capability.get_usage_raw(token, &client).await {
+                Ok(value) => {
+                    raw_results.insert(agent_id.to_string(), value);
+                }
+                Err(err) => errors.push(format!("{agent_id} usage error: {err}")),
+            }
+        } else {
+            match usage_capability
+                .get_usage_with_fallback(saved_token.as_ref(), &client, config)
+                .await
+            {
+                Ok(info) => usage_results.push(info),
+                Err(err) => errors.push(format!("{agent_id} usage error: {err}")),
+            }
         }
     }
 
@@ -151,13 +159,7 @@ pub async fn run(config: &AppConfig, options: UsageOptions) -> Result<()> {
         }
     }
 
-    if !found_any_token {
-        if options.raw {
-            return Ok(());
-        }
-        if options.json {
-            return Ok(());
-        }
+    if should_print_login_hint(&options, found_any_token, has_data) {
         let supported_logins = target_agent
             .map(|name| format!("`vibemate login {name}`"))
             .unwrap_or_else(|| {
@@ -182,6 +184,10 @@ pub async fn run(config: &AppConfig, options: UsageOptions) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn should_print_login_hint(options: &UsageOptions, found_any_token: bool, has_data: bool) -> bool {
+    !found_any_token && !has_data && !options.raw && !options.json
 }
 
 fn validate_target_agent(agent: Option<&str>) -> Result<Option<&str>> {
@@ -275,6 +281,7 @@ fn to_usage_json_agent(info: &UsageInfo) -> UsageJsonAgent {
         agent_name: info.agent_name.clone(),
         display_name: info.display_name.clone(),
         plan: info.plan.clone(),
+        source: info.source.clone(),
         quotas,
         extra_quotas,
     }
@@ -429,8 +436,8 @@ mod tests {
     use crate::agent::{UsageInfo, UsageWindow};
 
     use super::{
-        derive_display_name, derive_quota_name, filter_extra_windows, to_usage_json_agent,
-        validate_target_agent,
+        UsageOptions, derive_display_name, derive_quota_name, filter_extra_windows,
+        should_print_login_hint, to_usage_json_agent, validate_target_agent,
     };
 
     #[test]
@@ -563,6 +570,7 @@ mod tests {
                 },
             ],
             extra_usage: None,
+            source: None,
         };
 
         let json_agent = to_usage_json_agent(&info);
@@ -595,6 +603,7 @@ mod tests {
                 },
             ],
             extra_usage: None,
+            source: None,
         };
 
         let json_agent = to_usage_json_agent(&info);
@@ -629,6 +638,7 @@ mod tests {
                 },
             ],
             extra_usage: None,
+            source: None,
         }];
 
         filter_extra_windows(&mut usage);
@@ -650,5 +660,21 @@ mod tests {
             err.to_string(),
             "OAuth error: Unsupported agent 'unknown-agent'. Use 'codex', 'claude', 'cursor', 'gemini'"
         );
+    }
+
+    #[test]
+    fn login_hint_is_suppressed_when_fallback_usage_succeeds() {
+        let options = UsageOptions::default();
+
+        assert!(!should_print_login_hint(&options, false, true));
+        assert!(should_print_login_hint(&options, false, false));
+        assert!(!should_print_login_hint(
+            &UsageOptions {
+                json: true,
+                ..UsageOptions::default()
+            },
+            false,
+            false
+        ));
     }
 }

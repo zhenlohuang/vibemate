@@ -1,6 +1,9 @@
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::sync::LazyLock;
 use std::time::Duration;
+
+use crate::error::{AppError, Result};
 
 const PROXY_ENV_KEYS: [&str; 6] = [
     "https_proxy",
@@ -11,24 +14,13 @@ const PROXY_ENV_KEYS: [&str; 6] = [
     "HTTP_PROXY",
 ];
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Default)]
 #[serde(default, deny_unknown_fields)]
 pub struct AppConfig {
     pub system: SystemConfig,
     pub router: RouterConfig,
     pub agents: AgentsConfig,
     pub providers: HashMap<String, ProviderConfig>,
-}
-
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self {
-            system: SystemConfig::default(),
-            router: RouterConfig::default(),
-            agents: AgentsConfig::default(),
-            providers: HashMap::new(),
-        }
-    }
 }
 
 impl AppConfig {
@@ -40,18 +32,20 @@ impl AppConfig {
         let secs = self.agents.usage_refresh_interval_secs.max(1);
         Duration::from_secs(secs)
     }
+
+    pub fn agent_source_config(&self, agent_id: &str) -> &AgentSourceConfig {
+        self.agents.agent_source_config(agent_id)
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        self.agents.validate()
+    }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Default)]
 #[serde(default, deny_unknown_fields)]
 pub struct SystemConfig {
     pub proxy: Option<String>,
-}
-
-impl Default for SystemConfig {
-    fn default() -> Self {
-        Self { proxy: None }
-    }
 }
 
 impl SystemConfig {
@@ -109,6 +103,10 @@ fn read_proxy_env_var(key: &str) -> Option<String> {
 pub struct AgentsConfig {
     pub show_extra_quota: bool,
     pub usage_refresh_interval_secs: u64,
+    pub codex: AgentSourceConfig,
+    pub claude: AgentSourceConfig,
+    pub cursor: AgentSourceConfig,
+    pub gemini: AgentSourceConfig,
 }
 
 impl Default for AgentsConfig {
@@ -116,8 +114,119 @@ impl Default for AgentsConfig {
         Self {
             show_extra_quota: false,
             usage_refresh_interval_secs: 300,
+            codex: AgentSourceConfig::default(),
+            claude: AgentSourceConfig::default(),
+            cursor: AgentSourceConfig::default(),
+            gemini: AgentSourceConfig::default(),
         }
     }
+}
+
+impl AgentsConfig {
+    pub fn agent_source_config(&self, agent_id: &str) -> &AgentSourceConfig {
+        match agent_id {
+            "codex" => &self.codex,
+            "claude" => &self.claude,
+            "cursor" => &self.cursor,
+            "gemini" => &self.gemini,
+            _ => &DEFAULT_AGENT_SOURCE_CONFIG,
+        }
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        validate_agent_usage_source("codex", self.codex.usage_source)?;
+        validate_agent_usage_source("claude", self.claude.usage_source)?;
+        validate_agent_usage_source("cursor", self.cursor.usage_source)?;
+        validate_agent_usage_source("gemini", self.gemini.usage_source)?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum UsageSourceKind {
+    #[default]
+    Auto,
+    Oauth,
+    Cli,
+    Web,
+    Local,
+}
+
+impl UsageSourceKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Oauth => "oauth",
+            Self::Cli => "cli",
+            Self::Web => "web",
+            Self::Local => "local",
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(default, deny_unknown_fields)]
+pub struct AgentSourceConfig {
+    pub usage_source: UsageSourceKind,
+    pub cli_path: Option<String>,
+    pub session_dir: Option<String>,
+    pub cookie_browser: Option<String>,
+}
+
+impl Default for AgentSourceConfig {
+    fn default() -> Self {
+        Self {
+            usage_source: UsageSourceKind::Auto,
+            cli_path: None,
+            session_dir: None,
+            cookie_browser: Some("chrome".to_string()),
+        }
+    }
+}
+
+static DEFAULT_AGENT_SOURCE_CONFIG: LazyLock<AgentSourceConfig> =
+    LazyLock::new(AgentSourceConfig::default);
+
+const ALL_USAGE_SOURCES: &[UsageSourceKind] = &[
+    UsageSourceKind::Auto,
+    UsageSourceKind::Oauth,
+    UsageSourceKind::Cli,
+    UsageSourceKind::Web,
+    UsageSourceKind::Local,
+];
+const CURSOR_USAGE_SOURCES: &[UsageSourceKind] = &[
+    UsageSourceKind::Auto,
+    UsageSourceKind::Oauth,
+    UsageSourceKind::Web,
+];
+const GEMINI_USAGE_SOURCES: &[UsageSourceKind] = &[
+    UsageSourceKind::Auto,
+    UsageSourceKind::Oauth,
+    UsageSourceKind::Local,
+];
+
+pub fn validate_agent_usage_source(agent_id: &str, usage_source: UsageSourceKind) -> Result<()> {
+    let supported = match agent_id {
+        "cursor" => CURSOR_USAGE_SOURCES,
+        "gemini" => GEMINI_USAGE_SOURCES,
+        "codex" | "claude" => ALL_USAGE_SOURCES,
+        _ => ALL_USAGE_SOURCES,
+    };
+
+    if supported.contains(&usage_source) {
+        return Ok(());
+    }
+
+    let supported_values = supported
+        .iter()
+        .map(|kind| format!("\"{}\"", kind.as_str()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(AppError::Config(format!(
+        "Agent `{agent_id}` does not support usage_source = \"{}\". Supported values: {supported_values}",
+        usage_source.as_str()
+    )))
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -194,7 +303,10 @@ pub struct RoutingRule {
 mod tests {
     use std::collections::HashMap;
 
-    use super::{AppConfig, SystemConfig, first_proxy_env_value, normalize_proxy_value};
+    use super::{
+        AppConfig, SystemConfig, UsageSourceKind, first_proxy_env_value, normalize_proxy_value,
+        validate_agent_usage_source,
+    };
 
     #[test]
     fn system_config_default_proxy_is_none() {
@@ -308,5 +420,108 @@ mod tests {
         assert_eq!(parsed.router.logging.file_path, "/tmp/router.log");
         assert_eq!(parsed.router.logging.max_file_size_mb, 7);
         assert_eq!(parsed.router.logging.max_files, 5);
+    }
+
+    #[test]
+    fn app_config_supports_agent_usage_source_overrides() {
+        let value = r#"
+            [agents]
+            show_extra_quota = true
+            usage_refresh_interval_secs = 60
+
+            [agents.codex]
+            usage_source = "web"
+            cli_path = "/opt/homebrew/bin/codex"
+            session_dir = "~/.codex/sessions"
+
+            [agents.claude]
+            usage_source = "local"
+            cookie_browser = "firefox"
+
+            [agents.cursor]
+            usage_source = "web"
+            cookie_browser = "firefox"
+
+            [agents.gemini]
+            usage_source = "local"
+            session_dir = "~/.gemini"
+
+            [router]
+            host = "127.0.0.1"
+            port = 12345
+            default_provider = "openai-official"
+            rules = []
+
+            [providers.openai-official]
+            base_url = "https://api.openai.com/v1"
+        "#;
+
+        let parsed: AppConfig = toml::from_str(value).expect("config should parse");
+        assert!(parsed.agents.show_extra_quota);
+        assert_eq!(parsed.agents.codex.usage_source, UsageSourceKind::Web);
+        assert_eq!(
+            parsed.agents.codex.cli_path.as_deref(),
+            Some("/opt/homebrew/bin/codex")
+        );
+        assert_eq!(parsed.agents.claude.usage_source, UsageSourceKind::Local);
+        assert_eq!(
+            parsed.agents.claude.cookie_browser.as_deref(),
+            Some("firefox")
+        );
+        assert_eq!(parsed.agents.cursor.usage_source, UsageSourceKind::Web);
+        assert_eq!(parsed.agents.gemini.usage_source, UsageSourceKind::Local);
+        assert_eq!(
+            parsed.agents.gemini.session_dir.as_deref(),
+            Some("~/.gemini")
+        );
+    }
+
+    #[test]
+    fn agent_source_config_defaults_cookie_browser_to_chrome() {
+        let config = AppConfig::default();
+
+        assert_eq!(
+            config.agents.codex.cookie_browser.as_deref(),
+            Some("chrome")
+        );
+        assert_eq!(
+            config.agents.claude.cookie_browser.as_deref(),
+            Some("chrome")
+        );
+        assert_eq!(
+            config.agents.cursor.cookie_browser.as_deref(),
+            Some("chrome")
+        );
+        assert_eq!(
+            config.agents.gemini.cookie_browser.as_deref(),
+            Some("chrome")
+        );
+        assert_eq!(
+            config
+                .agent_source_config("unknown")
+                .cookie_browser
+                .as_deref(),
+            Some("chrome")
+        );
+    }
+
+    #[test]
+    fn cursor_rejects_unsupported_usage_sources() {
+        let err = validate_agent_usage_source("cursor", UsageSourceKind::Local).unwrap_err();
+
+        assert_eq!(
+            err.to_string(),
+            "Configuration error: Agent `cursor` does not support usage_source = \"local\". Supported values: \"auto\", \"oauth\", \"web\""
+        );
+    }
+
+    #[test]
+    fn gemini_rejects_unsupported_usage_sources() {
+        let err = validate_agent_usage_source("gemini", UsageSourceKind::Web).unwrap_err();
+
+        assert_eq!(
+            err.to_string(),
+            "Configuration error: Agent `gemini` does not support usage_source = \"web\". Supported values: \"auto\", \"oauth\", \"local\""
+        );
     }
 }

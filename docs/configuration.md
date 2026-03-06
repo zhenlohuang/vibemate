@@ -49,6 +49,51 @@ What each file is for:
 - `show_extra_quota`: show extra quota windows in usage/dashboard.
 - `usage_refresh_interval_secs`: usage refresh interval in dashboard.
 
+### `[agents.<agent>]`
+- `usage_source`: usage data source selection.
+  - `auto`: try the agent's fallback chain.
+  - `oauth`: use VibeMate's saved OAuth token only.
+  - `web`: use browser/agent-web auth fallback.
+  - `cli`: use CLI process fallback when available.
+  - `local`: use local session/cache files only.
+- `cli_path`: optional absolute path to the agent CLI binary.
+- `session_dir`: optional override for the local session/cache directory.
+- `cookie_browser`: browser name for cookie-based web fallback. Current values: `chrome`, `firefox`, `safari`. Default: `chrome`.
+
+Example:
+
+```toml
+[agents]
+show_extra_quota = false
+usage_refresh_interval_secs = 300
+
+[agents.codex]
+usage_source = "auto"
+cli_path = "/opt/homebrew/bin/codex"
+session_dir = "~/.codex/sessions"
+
+[agents.claude]
+usage_source = "local"
+session_dir = "~/.claude/projects"
+cookie_browser = "chrome"
+
+[agents.cursor]
+usage_source = "web"
+cookie_browser = "chrome"
+
+[agents.gemini]
+usage_source = "local"
+session_dir = "~/.gemini"
+```
+
+Behavior notes:
+- `codex` auto order: `oauth -> web -> local -> cli`
+- `claude` auto order: `oauth -> local -> web -> cli`
+- `cursor` auto order: `oauth -> web`
+- `gemini` auto order: `oauth -> local`
+- `gemini` `local` reads `oauth_creds.json` from the configured session dir (or `~/.gemini/oauth_creds.json`) and then calls the Gemini quota APIs with that credential.
+- `local` fallback is best-effort and summarizes recent local activity when a quota API is unavailable.
+
 ### `[providers.<name>]`
 - `base_url`: upstream API base URL.
 - `api_key`: optional API key; VibeMate auto-adds `Authorization: Bearer <api_key>` if no authorization header already exists.

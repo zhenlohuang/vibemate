@@ -28,3 +28,5 @@ dirs = "6"
 chrono = { version = "0.4", features = ["serde"] }
 open = "5"
 async-trait = "0.1"
+regex = "1"
+which = "7"

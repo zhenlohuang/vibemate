@@ -478,6 +478,7 @@ mod tests {
                 source_limit_name: None,
             }],
             extra_usage: None,
+            source: None,
         }];
 
         let output = render_static_lines(&usage, 100, "No usage data available.").join("\n");
@@ -506,6 +507,7 @@ mod tests {
                 source_limit_name: None,
             }],
             extra_usage: None,
+            source: None,
         }];
 
         let output = render_static_lines(&usage, 100, "No usage data available.").join("\n");
@@ -526,6 +528,7 @@ mod tests {
                 source_limit_name: None,
             }],
             extra_usage: None,
+            source: None,
         }];
 
         let output = render_static_lines(&usage, 100, "No usage data available.").join("\n");
@@ -555,6 +558,7 @@ mod tests {
                 },
             ],
             extra_usage: None,
+            source: None,
         }];
 
         let output = render_static_lines(&usage, 100, "No usage data available.").join("\n");
@@ -580,6 +584,7 @@ mod tests {
             plan: None,
             windows,
             extra_usage: None,
+            source: None,
         }];
 
         let (lines0, meta0) = render_lines_with_scroll(&usage, 100, 16, 0, Some(0));
@@ -616,6 +621,7 @@ mod tests {
             plan: None,
             windows,
             extra_usage: None,
+            source: None,
         }];
 
         let (lines0, meta0) = render_lines_with_scroll(&usage, 100, 16, 0, None);
